@@ -27,49 +27,78 @@ you run it. Every conclusion must be backed by a build log.
 in one command is gone by the next. So you must never "source once at the start
 and assume later bitbake calls inherit it" — every place that actually invokes
 bitbake has to source the environment itself. This skill already handles that
-for you; you just need to configure it:
+for you; you just need to configure it.
 
-1. Many Yocto projects have a custom setup script that runs
-   `source oe-init-build-env` **and also** sources an SDK environment (the cross
-   toolchain). First find out whether the user's project works this way:
-   - Ask the user (or look in the project root) for the path to that script,
-     e.g. `setup-build-env.sh`, `env.sh`, `setup-environment`, etc.
-2. Write the absolute path of that script into `.yocto-recipe-gen.conf` in the
-   **working directory** (format: see `examples/yocto-recipe-gen.conf.example`):
+**MANDATORY FIRST STEP — ask before doing anything else.** Before you run a
+single bitbake/recipetool/layer command, before you stage any source, before any
+other action, you MUST ask the user this question and wait for the answer:
+
+> "Do you have your own environment setup script (one that sources
+> `oe-init-build-env`, and possibly your SDK environment too)? If yes, please
+> give me its exact path or filename. If no, I'll use the standard
+> `oe-init-build-env`."
+
+Then branch on the answer:
+
+- **The user HAS their own script:** they MUST tell you its path or filename —
+  do not guess it, do not proceed without it. If they say "yes" but don't give a
+  path, ask again for the exact path/filename before continuing. Write that path
+  into `ENV_SETUP` (see below). Such a script commonly also sources an SDK cross
+  toolchain, which is exactly why we defer to it rather than calling
+  `oe-init-build-env` ourselves.
+- **The user does NOT have their own script:** use the standard
+  `oe-init-build-env`. Ask for (or confirm) the poky path and the build dir, then
+  set `ENV_SETUP` to point at a tiny wrapper you write for them whose body is
+  `source /path/to/poky/oe-init-build-env /path/to/builddir`, or point `ENV_SETUP`
+  directly at poky's `oe-init-build-env` (it is sourceable) with the build dir in
+  `ENV_SETUP_ARGS`.
+
+Write the result into `.yocto-recipe-gen.conf` in the **working directory**
+(format: see `examples/yocto-recipe-gen.conf.example`):
    ```sh
    ENV_SETUP="/abs/path/to/the-users/setup-build-env.sh"
    # If that script needs arguments (e.g. a build dir name):
    # ENV_SETUP_ARGS="build"
    ```
-   If the user only uses the standard `oe-init-build-env` with no SDK, point
-   `ENV_SETUP` at a tiny wrapper you write for them (whose body is just
-   `source /path/to/poky/oe-init-build-env /path/to/builddir`), or point it
-   directly at poky's `oe-init-build-env` (it is sourceable).
-3. From then on:
-   - **Run every one-off bitbake-family command** (`bitbake-layers`,
-     `recipetool`, `bitbake -e`, `devtool`, `oe-pkgdata-util`, …) through
-     `scripts/run_in_env.sh <command>`, e.g.
-     `scripts/run_in_env.sh bitbake-layers show-layers`. That wrapper sources
-     the configured environment script first, then runs the command.
-   - **`scripts/build_loop.sh` sources the environment on its own** (reading the
-     same `.yocto-recipe-gen.conf`), so you do NOT wrap it in `run_in_env.sh` —
-     call it directly.
-   - If the user insists "I'm already in a sourced interactive shell, just run
-     bitbake directly" and the config is left empty, `run_in_env.sh` /
-     `build_loop.sh` will print a warning and assume the environment is already
-     present — but since each Bash command is a fresh shell this usually does
-     NOT hold, so **by default always configure `.yocto-recipe-gen.conf`**.
 
-### 0b. Verify the environment actually works
+**Hard gate:** you may not take any recipe-related action until 0b confirms the
+sourcing actually succeeded. If you cannot get a working sourced environment,
+stop and tell the user — do not attempt to work around it.
+
+From then on:
+
+- **Run every one-off bitbake-family command** (`bitbake-layers`,
+  `recipetool`, `bitbake -e`, `devtool`, `oe-pkgdata-util`, …) through
+  `scripts/run_in_env.sh <command>`, e.g.
+  `scripts/run_in_env.sh bitbake-layers show-layers`. That wrapper sources
+  the configured environment script first, then runs the command.
+- **`scripts/build_loop.sh` sources the environment on its own** (reading the
+  same `.yocto-recipe-gen.conf`), so you do NOT wrap it in `run_in_env.sh` —
+  call it directly.
+- If the user insists "I'm already in a sourced interactive shell, just run
+  bitbake directly" and the config is left empty, `run_in_env.sh` /
+  `build_loop.sh` will print a warning and assume the environment is already
+  present — but since each Bash command is a fresh shell this usually does
+  NOT hold, so **by default always configure `.yocto-recipe-gen.conf`**.
+
+### 0b. Verify the environment actually works (the gate that unlocks all other work)
+
+You may NOT generate, edit, or build any recipe until both checks below pass.
+This is the confirmation that "sourcing actually succeeded" required by 0a.
 
 1. Run `scripts/run_in_env.sh bitbake --version` to confirm bitbake really is on
    PATH after sourcing.
-   - If it fails, **stop** and tell the user they need to make sure their setup
-     script correctly runs `source oe-init-build-env`. Do NOT try to install or
-     bootstrap a whole poky tree yourself — that is the user's environment to
-     own.
+   - If it fails, **stop** and tell the user. If they gave their own script,
+     report that sourcing it did not put bitbake on PATH and ask them to
+     double-check the path/filename or the script itself. If we're using the
+     standard `oe-init-build-env`, ask them to confirm the poky path. Do NOT try
+     to install or bootstrap a whole poky tree yourself — that is the user's
+     environment to own, and do NOT proceed with any recipe work until this
+     passes.
 2. Run `scripts/run_in_env.sh bash -c 'echo $BUILDDIR; ls $BUILDDIR/conf/bblayers.conf'`
    to confirm `BUILDDIR` is set and `bblayers.conf` exists.
+
+Only once both checks pass may you move on to 0c and the rest of the workflow.
 
 ### 0c. Pick the target layer
 

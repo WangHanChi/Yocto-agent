@@ -115,6 +115,12 @@ Because **each agent tool call runs in a fresh shell**, an environment you
 environment before every bitbake command. You point it at your environment
 script via a config file.
 
+As a hard rule, before doing anything the agent first asks whether you have your
+own setup script. If you do, you must give it the exact path/filename; if you
+don't, it falls back to the standard `oe-init-build-env`. Either way it will not
+start any recipe work until it has confirmed the environment sources
+successfully.
+
 Create `.yocto-recipe-gen.conf` in the directory you run the agent from (where
 you would normally `source` your env), based on
 `examples/yocto-recipe-gen.conf.example`:

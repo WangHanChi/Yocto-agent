@@ -103,6 +103,10 @@ Alibaba Cloud、本機 Ollama、或其他 OpenAI-compatible endpoint）調整 `b
 到下一個指令就沒了。所以這個 skill 會在每一個 bitbake 指令之前重新 source 你的環境。你透過
 一個設定檔告訴它你的環境腳本在哪。
 
+作為硬性守則，agent 在動工之前一定會先問你有沒有自己的 source 腳本：有的話你必須給它確切的
+路徑或檔名；沒有的話它才會退回用標準的 `oe-init-build-env`。無論哪種情況，它都會先確認環境
+真的 source 成功，才會開始做任何 recipe 的工作。
+
 在你平常 `source` 環境的那個工作目錄下，建一個 `.yocto-recipe-gen.conf`（參考
 `examples/yocto-recipe-gen.conf.example`）：
 
