@@ -9,152 +9,274 @@ metadata:
 
 # Yocto Recipe Generator + Build-Fix Loop
 
-你現在是這個 skill 的執行者，扮演一位資深 Yocto/OpenEmbedded BSP 工程師。你的任務分成兩個階段：
-**(A) 從使用者提供的 source 產生一份正確、乾淨的 BitBake recipe**，
-**(B) 用真實的 bitbake build 當作 ground truth，反覆 build → 讀錯誤 → 修 recipe，直到 build 成功或超過重試上限。**
+You are the executor of this skill, acting as a senior Yocto/OpenEmbedded BSP
+engineer. Your job has two phases:
+**(A) produce a correct, clean BitBake recipe from the source the user
+provides**, and
+**(B) use a real bitbake build as ground truth, looping build → read error →
+fix recipe, until the build succeeds or a retry budget is exhausted.**
 
-不要臆測 bitbake 的行為 —— 一律以實際執行結果為準。所有結論都要能被 build log 佐證。
+Never guess at bitbake's behavior — always defer to what actually happens when
+you run it. Every conclusion must be backed by a build log.
 
-## 0. 前置檢查（每次啟動一定要做）
+## 0. Prerequisites (do this every time you start)
 
-### 0a. 環境 sourcing —— 這是最容易出錯的地方，一定先處理
+### 0a. Environment sourcing — the easiest thing to get wrong, handle it first
 
-**你每下一個 Bash 指令都是一個全新的 shell**，前一個指令 `source` 過的環境到下一個指令就消失了。所以絕對不能「開頭 source 一次就以為之後的 bitbake 都在環境裡」——每一個真正呼叫 bitbake 的地方都必須自己先 source。這個 skill 已經幫你處理好，你只要做設定：
+**Every Bash command you run is a fresh shell**; an environment you `source`d
+in one command is gone by the next. So you must never "source once at the start
+and assume later bitbake calls inherit it" — every place that actually invokes
+bitbake has to source the environment itself. This skill already handles that
+for you; you just need to configure it:
 
-1. 很多使用者的 Yocto 專案有一支自訂的環境腳本，它會 `source oe-init-build-env`，**而且**還會 source SDK 的環境（cross toolchain）。先確認使用者的專案是不是這種情況：
-   - 問使用者（或從專案根目錄找）那支腳本的路徑，例如 `setup-build-env.sh`、`env.sh`、`setup-environment` 之類。
-2. 把那支腳本的絕對路徑寫進**工作目錄**下的 `.yocto-recipe-gen.conf`（格式見 `examples/yocto-recipe-gen.conf.example`）：
+1. Many Yocto projects have a custom setup script that runs
+   `source oe-init-build-env` **and also** sources an SDK environment (the cross
+   toolchain). First find out whether the user's project works this way:
+   - Ask the user (or look in the project root) for the path to that script,
+     e.g. `setup-build-env.sh`, `env.sh`, `setup-environment`, etc.
+2. Write the absolute path of that script into `.yocto-recipe-gen.conf` in the
+   **working directory** (format: see `examples/yocto-recipe-gen.conf.example`):
    ```sh
-   ENV_SETUP="/abs/path/to/使用者的/setup-build-env.sh"
-   # 若該腳本需要參數（例如 build 目錄名），再加 ENV_SETUP_ARGS="build"
+   ENV_SETUP="/abs/path/to/the-users/setup-build-env.sh"
+   # If that script needs arguments (e.g. a build dir name):
+   # ENV_SETUP_ARGS="build"
    ```
-   若使用者只用標準的 `oe-init-build-env`、沒有 SDK，就把 `ENV_SETUP` 指向一支你幫他寫的小 wrapper（內容就是 `source /path/to/poky/oe-init-build-env /path/to/builddir`），或直接指向 poky 的 `oe-init-build-env`（它可被 source）。
-3. 從此以後：
-   - **所有一次性的 bitbake 家族指令**（`bitbake-layers`、`recipetool`、`bitbake -e`、`devtool`、`oe-pkgdata-util`…）都要透過 `scripts/run_in_env.sh <指令>` 執行，例如
-     `scripts/run_in_env.sh bitbake-layers show-layers`。這支 wrapper 會先 source 你設定的環境腳本再執行指令。
-   - **`scripts/build_loop.sh` 會自己 source 環境**（讀同一個 `.yocto-recipe-gen.conf`），所以它不用再包一層 `run_in_env.sh`，直接呼叫即可。
-   - 若使用者堅持「我已經在一個 source 過的互動 shell 裡、你直接跑就好」，而環境設定檔留空，`run_in_env.sh`/`build_loop.sh` 會印出提醒並假設環境已存在——但因為每個 Bash 指令是新 shell，這通常不成立，**預設一定要設好 `.yocto-recipe-gen.conf`**。
+   If the user only uses the standard `oe-init-build-env` with no SDK, point
+   `ENV_SETUP` at a tiny wrapper you write for them (whose body is just
+   `source /path/to/poky/oe-init-build-env /path/to/builddir`), or point it
+   directly at poky's `oe-init-build-env` (it is sourceable).
+3. From then on:
+   - **Run every one-off bitbake-family command** (`bitbake-layers`,
+     `recipetool`, `bitbake -e`, `devtool`, `oe-pkgdata-util`, …) through
+     `scripts/run_in_env.sh <command>`, e.g.
+     `scripts/run_in_env.sh bitbake-layers show-layers`. That wrapper sources
+     the configured environment script first, then runs the command.
+   - **`scripts/build_loop.sh` sources the environment on its own** (reading the
+     same `.yocto-recipe-gen.conf`), so you do NOT wrap it in `run_in_env.sh` —
+     call it directly.
+   - If the user insists "I'm already in a sourced interactive shell, just run
+     bitbake directly" and the config is left empty, `run_in_env.sh` /
+     `build_loop.sh` will print a warning and assume the environment is already
+     present — but since each Bash command is a fresh shell this usually does
+     NOT hold, so **by default always configure `.yocto-recipe-gen.conf`**.
 
-### 0b. 確認環境真的可用
+### 0b. Verify the environment actually works
 
-1. 跑 `scripts/run_in_env.sh bitbake --version`，確認 source 之後 bitbake 真的在 PATH 上。
-   - 若失敗，**停下來**，向使用者說明需要先確認那支環境腳本能正確 `source oe-init-build-env`，不要自己嘗試安裝或初始化一整套 poky —— 這是使用者環境的責任。
-2. 跑 `scripts/run_in_env.sh bash -c 'echo $BUILDDIR; ls $BUILDDIR/conf/bblayers.conf'` 確認 `BUILDDIR` 有被設定、`bblayers.conf` 存在。
-2. 用 `scripts/run_in_env.sh bitbake-layers show-layers` 列出目前有哪些 layer，決定新 recipe 要放進哪個 layer（記得：所有 bitbake 家族指令都要透過 `run_in_env.sh`，見 0a）：
-   - 如果使用者已指定 layer，用它。
-   - 否則優先找名稱像 `meta-<vendor>`、`meta-bsp`、有自己 recipes-* 目錄的自訂 layer；不要把新 recipe 塞進 `meta`/`meta-poky`/`meta-yocto-bsp` 這類上游核心層。
-   - 如果完全沒有合適的自訂 layer，用 `scripts/run_in_env.sh bitbake-layers create-layer ../meta-<name>` 建一個，並 `scripts/run_in_env.sh bitbake-layers add-layer ...`，但**先跟使用者確認 layer 名稱**再建立（這是使用者的專案命名，不要幫他亂取）。
-3. 確認新 recipe 的 `PN` 目前不存在（`scripts/run_in_env.sh bitbake-layers show-recipes <pn>`），避免跟既有 recipe 撞名。
+1. Run `scripts/run_in_env.sh bitbake --version` to confirm bitbake really is on
+   PATH after sourcing.
+   - If it fails, **stop** and tell the user they need to make sure their setup
+     script correctly runs `source oe-init-build-env`. Do NOT try to install or
+     bootstrap a whole poky tree yourself — that is the user's environment to
+     own.
+2. Run `scripts/run_in_env.sh bash -c 'echo $BUILDDIR; ls $BUILDDIR/conf/bblayers.conf'`
+   to confirm `BUILDDIR` is set and `bblayers.conf` exists.
 
-## 1. 判斷輸入型態
+### 0c. Pick the target layer
 
-使用者輸入可能是：
+1. List the current layers with `scripts/run_in_env.sh bitbake-layers show-layers`
+   and decide which layer the new recipe belongs in (remember: all bitbake-family
+   commands go through `run_in_env.sh`, see 0a):
+   - If the user named a layer, use it.
+   - Otherwise prefer a custom layer whose name looks like `meta-<vendor>` /
+     `meta-bsp` and that has its own `recipes-*` dirs. Do NOT drop the new recipe
+     into upstream core layers like `meta` / `meta-poky` / `meta-yocto-bsp`.
+   - If there is genuinely no suitable custom layer, create one with
+     `scripts/run_in_env.sh bitbake-layers create-layer ../meta-<name>` and
+     `scripts/run_in_env.sh bitbake-layers add-layer ...` — but **confirm the
+     layer name with the user first** (this is their project's naming, don't
+     invent it for them).
+2. Confirm the new recipe's `PN` does not already exist
+   (`scripts/run_in_env.sh bitbake-layers show-recipes <pn>`) to avoid a name
+   collision with an existing recipe.
 
-| 型態 | 判斷方式 |
+## 1. Classify the input
+
+The user's input may be:
+
+| Type | How to recognize it |
 |---|---|
-| Git URL | 以 `git://`、`git@`、或 `https?://...\.git` 結尾，或是常見 hosting（github.com/gitlab.com/bitbucket.org…）的 repo 網址 |
-| 壓縮檔（URL 或本機路徑） | 副檔名 `.tar.gz` `.tgz` `.tar.bz2` `.tar.xz` `.zip` |
-| 本機原始碼路徑 | 一個存在的本機目錄 |
+| Git URL | starts with `git://` / `git@`, or ends in `https?://...\.git`, or is a repo URL on a common host (github.com / gitlab.com / bitbucket.org …) |
+| Archive (URL or local path) | extension `.tar.gz` `.tgz` `.tar.bz2` `.tar.xz` `.zip` |
+| Local source path | an existing local directory |
 
-呼叫 `scripts/fetch_source.sh <input>`，它會回傳一段可解析的摘要（`SRC_TYPE=`、`STAGE_DIR=`、`RESOLVED_VERSION=`、`SRC_URI_BB=`、`SRCREV=` 等 key=value）。把 source 暫存到 scratch 目錄先做分析，**還不要直接寫進 layer**。
+Call `scripts/fetch_source.sh <input>`. It returns a parseable summary of
+`key=value` lines (`SRC_TYPE=`, `STAGE_DIR=`, `RESOLVED_VERSION=`,
+`SRC_URI_BB=`, `SRCREV=`, …). Stage the source into a scratch dir for analysis
+first — **do not write anything into a layer yet**.
 
-### 本機路徑輸入的兩種策略 —— 一定要問清楚使用者要哪一種
+### Two strategies for a local-path input — always confirm which one the user wants
 
-本機目錄輸入常見於 BSP 開發情境，有兩種正確做法，行為差很多，**預設用 externalsrc（開發模式），但如果使用者的目的聽起來是「要上游一份可重現的 recipe」，改用 vendor tarball 模式，不確定就直接問使用者**：
+A local directory input is common in BSP development, and there are two correct
+approaches whose behavior differs a lot. **Default to externalsrc (dev mode),
+but if the user's intent sounds like "I want an upstream, reproducible recipe",
+use vendor-tarball mode instead; when unsure, just ask the user:**
 
-- **externalsrc（開發模式，預設）**：`inherit externalsrc`，`EXTERNALSRC = "<絕對路徑>"`，不做 fetch/unpack，直接對使用者的工作目錄做 in-place build。適合「我在改這份 code，想邊改邊 bitbake」。**沒有版本鎖定、不可重現**，只適合本機迭代。
-- **vendor tarball（可重現模式）**：把本機目錄打包成 `<pn>-<pv>.tar.gz` 放進 layer 的 `files/`，`SRC_URI = "file://<pn>-<pv>.tar.gz"`。適合「這份 code 沒有上游 repo，但我要一份能被 CI / 別人重現 build 的 recipe」。
+- **externalsrc (dev mode, default):** `inherit externalsrc`,
+  `EXTERNALSRC = "<absolute path>"`, no fetch/unpack, builds the user's working
+  tree in place. Good for "I'm editing this code and want to bitbake as I go."
+  **No version pinning, not reproducible** — only for local iteration.
+- **vendor tarball (reproducible mode):** pack the local dir into
+  `<pn>-<pv>.tar.gz` under the layer's `files/`, with
+  `SRC_URI = "file://<pn>-<pv>.tar.gz"`. Good for "this code has no upstream
+  repo, but I want a recipe that CI / other people can reproduce."
 
-兩種都要在 `references/src-uri-fetchers.md` 找對應語法。
+Look up the exact syntax for both in `references/src-uri-fetchers.md`.
 
-## 2. 決定 PN / PV
+## 2. Decide PN / PV
 
-- Git：用 `git describe --tags` 或最新 tag 當 PV，`git rev-parse HEAD` 當 SRCREV。**不要用 `SRCREV = "${AUTOREV}"`**，除非使用者明確要求 floating/dev 用法——生產用的 BSP recipe 一定要 pin 到明確 commit，理由要在 recipe comment 說明。
-- Tarball：從檔名或內含的 `configure.ac`（`AC_INIT`）、`CMakeLists.txt`（`project(... VERSION ...)`）、`Cargo.toml`、`pyproject.toml`/`setup.py`、`package.json` 抓版本號。
-- PN 用 repo/資料夾/專案名稱轉小寫、底線轉連字號（符合 recipe 命名慣例）。
+- Git: use `git describe --tags` or the latest tag for PV, and
+  `git rev-parse HEAD` for SRCREV. **Do not use `SRCREV = "${AUTOREV}"`** unless
+  the user explicitly asked for floating/dev usage — a production BSP recipe must
+  pin to an explicit commit, and the reason should be stated in a recipe comment.
+- Tarball: extract the version from the filename or from a bundled
+  `configure.ac` (`AC_INIT`), `CMakeLists.txt` (`project(... VERSION ...)`),
+  `Cargo.toml`, `pyproject.toml`/`setup.py`, or `package.json`.
+- Derive PN from the repo/folder/project name, lowercased, underscores turned to
+  hyphens (per recipe naming convention).
 
-## 3. 偵測 build system
+## 3. Detect the build system
 
-跑 `scripts/detect_build_system.py <stage_dir>`，取得 JSON：`{"build_system": "...", "confidence": "...", "hints": [...]}`。對照 `references/bbclasses.md` 決定要 `inherit` 哪個 bbclass，以及該 class 常見的坑（見該檔案表格）。
+Run `scripts/detect_build_system.py <stage_dir>` to get JSON:
+`{"build_system": "...", "confidence": "...", "hints": [...]}`. Cross-reference
+`references/bbclasses.md` to decide which bbclass to `inherit` and the common
+pitfalls of that class (see the table in that file).
 
-## 4. 產生 recipe 草稿 —— 先用 recipetool，不要從零手刻
+## 4. Draft the recipe — start with recipetool, don't hand-write from scratch
 
-`recipetool` 是 openembedded-core 內建、跟你在同一個 poky checkout 裡的自動 recipe 產生工具，永遠先用它拿一份 baseline，再手動精修，而不是憑空編寫：
+`recipetool` is the automatic recipe generator built into openembedded-core,
+living in the same poky checkout as you. Always get a baseline from it first and
+then refine by hand, rather than writing a recipe from nothing:
 
 ```sh
 scripts/run_in_env.sh recipetool create -o <pn>_<pv>.bb "<src_uri>"
 ```
 
-`recipetool` 對 SRC_URI/build system/部分 license 猜測通常八九不離十，但**以下四項一定要人工/你自己再檢查一次，recipetool 常猜錯或猜不全**：
+`recipetool` is usually close on SRC_URI / build system / some license guesses,
+but **you must re-check these four things yourself — recipetool frequently gets
+them wrong or incomplete**:
 
-1. `LICENSE` / `LIC_FILES_CHKSUM` —— 用 `scripts/license_scan.py <stage_dir>` 輔助掃描，但最終判斷要你自己看過授權檔內容再下結論（法遵風險，見 `references/license-guide.md`）。
-2. `SRCREV`（是否已經 pin 到明確 commit，而不是 branch HEAD）。
-3. `DEPENDS`（recipetool 常常漏掉 build-time 依賴，要等 build loop 跑過才補齊，見第 5 節）。
-4. `do_install`（非標準 build system 常常需要手動覆寫）。
+1. `LICENSE` / `LIC_FILES_CHKSUM` — use `scripts/license_scan.py <stage_dir>` as
+   a scanning aid, but the final call requires you to read the license file
+   contents yourself (legal-compliance risk, see `references/license-guide.md`).
+2. `SRCREV` (is it pinned to an explicit commit rather than a branch HEAD?).
+3. `DEPENDS` (recipetool often misses build-time deps; these get filled in once
+   the build loop runs, see section 5).
+4. `do_install` (non-standard build systems often need a manual override).
 
-把精修過的檔案放進 `<layer>/recipes-<category>/<pn>/<pn>_<pv>.bb`。`<category>` 參考該 layer 已有的 `recipes-*` 目錄命名慣例；若真的無合適分類，用 `recipes-support`。`templates/` 目錄有各 build system 的乾淨骨架可以對照，避免遺漏必要欄位。
+Put the refined file at `<layer>/recipes-<category>/<pn>/<pn>_<pv>.bb`. For
+`<category>`, follow the existing `recipes-*` naming convention in that layer;
+if nothing fits, use `recipes-support`. The `templates/` dir has clean skeletons
+per build system to cross-check against so you don't omit required fields.
 
-## 5. Build-Fix Loop（這是這個 skill 的核心）
+## 5. Build-Fix Loop (this is the core of the skill)
 
-**你自己就是這個 loop**——不是跑一支會自動重試的 script。流程是：你呼叫 build 腳本一次、讀懂結果、動手改 recipe、再呼叫一次。每次迭代都要遵守：
+**You yourself are the loop** — this is not a script that auto-retries. The flow
+is: you call the build script once, understand the result, edit the recipe by
+hand, and call again. Every iteration must follow:
 
-1. 執行 `scripts/build_loop.sh <pn> <iteration_number>`。它會：
-   - 跑 `bitbake -e <pn> >/dev/null` 先做 parse-only 檢查（快、能抓 syntax/變數錯誤，不用等真正 compile）。
-   - 若 parse 過，才跑 `bitbake <pn>`。
-   - 把完整 log 存到 `./yocto-recipe-gen-logs/<pn>/iter-<n>.log`，並把 log 丟給 `scripts/parse_bitbake_log.py` 產生精簡的錯誤摘要（分類 + 關鍵幾十行），印到 stdout。
-   - 用 exit code 回報成功/失敗，不要自己重新設計判斷成功的邏輯。
-2. 若成功（exit 0）：跳到第 6 節收尾。
-3. 若失敗：
-   - 讀 `build_loop.sh` 印出的精簡摘要，對照 `references/error-fix-map.md` 找出症狀對應的常見成因與修法。
-   - **一次只改一件事**，並在心裡（或給使用者的說明裡）記錄「這輪改了什麼、為什麼」，避免重覆嘗試同一個無效修法。
-   - 如果 layer 是 git repo（建議一開始就確認/建議使用者用 git 管理 layer），每輪迭代後 `git diff` 一下自己的改動，方便回溯；若某次修改讓情況更糟，用 git 復原後換方向，不要在同一個檔案上疊加互相矛盾的修改。
-   - 常見修法對應（詳見 error-fix-map.md）：
-     - `do_fetch` checksum 不符 → 重新計算 `SRC_URI[sha256sum]`，或是 tag 被上游改過 → 改用明確 commit 的 `SRCREV`。
-     - `do_configure`/`do_compile` 找不到 header/lib（`fatal error: foo.h`、`cannot find -lfoo`）→ 加對應的 `DEPENDS`（先查該 lib 有沒有現成 recipe，`oe-pkgdata-util` 或既有 layer 搜尋，不要憑空造一個依賴名）。
-     - `do_install`：「No files in ${D}」或找不到要裝的檔案 → 檢視上游 Makefile/CMake 的 install target，覆寫 `do_install`，必要時 `EXTRA_OEMAKE`/`EXTRA_OECMAKE` 補參數。
-     - `QA Issue` (`insane.bbclass`) → 這類警告通常代表 packaging 真的有問題（rpath、already-stripped、buildpaths…），**優先修根因**，只有在你能說明清楚為什麼安全時才考慮 `INSANE_SKIP`，並在 recipe 留 comment 說明原因。
-     - `LIC_FILES_CHKSUM` 不符 → 重新 `md5sum` 授權檔，更新數值；如果授權檔內容真的變了，回頭確認 `LICENSE` 欄位是否也要跟著改。
-   - 修完後回到步驟 1，`iteration_number` 遞增。
-4. **重試上限**：預設最多 8 輪。每輪迭代結束前先確認還有預算；若即將超過上限仍未成功，**不要無限重試**，停下來給使用者一份清楚的診斷報告（見第 7 節失敗收尾）。
+1. Run `scripts/build_loop.sh <pn> <iteration_number>`. It will:
+   - Run `bitbake -e <pn> >/dev/null` as a parse-only check first (fast, catches
+     syntax/variable errors without waiting for a real compile).
+   - Only if parse passes, run `bitbake <pn>`.
+   - Save the full log to `./yocto-recipe-gen-logs/<pn>/iter-<n>.log`, and pass
+     the log through `scripts/parse_bitbake_log.py` to produce a condensed error
+     summary (category + the key few dozen lines), printed to stdout.
+   - Report success/failure via exit code — don't reinvent the success check.
+2. On success (exit 0): jump to section 6, finishing up.
+3. On failure:
+   - Read the condensed summary `build_loop.sh` printed, and cross-reference
+     `references/error-fix-map.md` to map the symptom to its common cause and
+     fix.
+   - **Change only one thing at a time**, and keep a record (mentally, or in your
+     explanation to the user) of "what I changed this round and why" to avoid
+     re-trying the same ineffective fix.
+   - If the layer is a git repo (recommend up front that the user keeps the layer
+     under git), `git diff` your changes after each iteration for traceability;
+     if a change made things worse, revert with git and try another direction —
+     don't pile contradictory edits onto the same file.
+   - Common fix mapping (details in error-fix-map.md):
+     - `do_fetch` checksum mismatch → recompute `SRC_URI[sha256sum]`, or if the
+       upstream tag moved → switch to an explicit-commit `SRCREV`.
+     - `do_configure`/`do_compile` can't find a header/lib (`fatal error:
+       foo.h`, `cannot find -lfoo`) → add the matching `DEPENDS` (first check
+       whether a recipe for that lib already exists via `oe-pkgdata-util` or by
+       searching existing layers; don't invent a dependency name).
+     - `do_install`: "No files in ${D}" or the files to install can't be found →
+       inspect the upstream Makefile/CMake install target, override `do_install`,
+       and add `EXTRA_OEMAKE`/`EXTRA_OECMAKE` args if needed.
+     - `QA Issue` (`insane.bbclass`) → these warnings usually mean packaging is
+       genuinely wrong (rpath, already-stripped, buildpaths, …). **Fix the root
+       cause first**; only consider `INSANE_SKIP` when you can clearly explain
+       why it's safe, and leave a recipe comment stating the reason.
+     - `LIC_FILES_CHKSUM` mismatch → re-`md5sum` the license file and update the
+       value; if the license file content really changed, go back and confirm
+       whether the `LICENSE` field should change too.
+   - After fixing, return to step 1 with `iteration_number` incremented.
+4. **Retry budget:** default max 8 iterations. Before ending each iteration,
+   check you still have budget; if you're about to exceed the limit without
+   success, **do not retry forever** — stop and give the user a clear diagnostic
+   report (see section 7, failure wrap-up).
 
-### Token 效率提醒
+### Token-efficiency reminder
 
-bitbake log 可能非常長，**永遠透過 `parse_bitbake_log.py` 的精簡摘要來判斷**，不要把整份 log 塞進你的上下文；只有在精簡摘要不足以判斷根因時，才用 `grep`/`tail` 針對性地讀原始 log 的特定段落。
+A bitbake log can be enormous. **Always judge from the condensed
+`parse_bitbake_log.py` summary**, don't stuff the whole log into your context;
+only when the condensed summary is insufficient to determine the root cause
+should you use `grep`/`tail` to read specific sections of the raw log on
+purpose.
 
-## 6. 成功收尾
+## 6. Success wrap-up
 
-1. Build 成功後，額外跑一次 `scripts/run_in_env.sh bitbake -c package_qa <pn>`（若該 recipe 有走 package pipeline）確認沒有殘留 QA 警告。
-2. 用 `git diff`（若 layer 受 git 控管）整理這次新增/修改的檔案清單。
-3. 向使用者總結：
-   - recipe 路徑
-   - 最終用了幾輪迭代
-   - 關鍵決策：LICENSE 判斷依據、SRCREV/版本鎖定方式、新增了哪些 DEPENDS、是否用了 externalsrc 開發模式（若是，提醒使用者這份 recipe 還不可重現，正式化前要換成 tarball/git+SRCREV 模式）。
-   - 明確列出「這是我自動判斷的，建議你人工複查」的項目——license 欄位永遠要放進這份清單。
+1. After a successful build, additionally run
+   `scripts/run_in_env.sh bitbake -c package_qa <pn>` (if the recipe goes through
+   the package pipeline) to confirm no lingering QA warnings.
+2. Use `git diff` (if the layer is under git) to compile the list of files added
+   or modified this time.
+3. Summarize for the user:
+   - the recipe path
+   - how many iterations it ultimately took
+   - key decisions: the basis for the LICENSE call, how SRCREV / the version was
+     pinned, which DEPENDS were added, and whether externalsrc dev mode was used
+     (if so, remind the user this recipe is not yet reproducible and must be
+     switched to tarball/git+SRCREV mode before productionizing).
+   - explicitly list the items that are "my automatic judgment, please review
+     manually" — the license field always goes on this list.
 
-## 7. 失敗收尾（超過重試上限）
+## 7. Failure wrap-up (retry budget exceeded)
 
-不要隱藏失敗。清楚報告：
+Don't hide a failure. Report clearly:
 
-- 目前的 recipe 內容與已經嘗試過的修法列表（避免使用者或下一輪對話重覆一樣的嘗試）。
-- 最後一輪的錯誤精簡摘要，以及完整 log 路徑（`./yocto-recipe-gen-logs/<pn>/iter-<n>.log`）。
-- 你認為卡住的根本原因是什麼、以及如果要繼續，建議下一步查什麼（例如：需要使用者確認某個私有依賴的正確 recipe 名稱、或上游 build system 有非標準行為需要看 upstream 文件）。
+- the current recipe contents and the list of fixes already attempted (so the
+  user, or the next conversation round, doesn't repeat the same attempts).
+- the condensed error summary from the last iteration, plus the full log path
+  (`./yocto-recipe-gen-logs/<pn>/iter-<n>.log`).
+- what you think the underlying blocker is, and if the work continues, what to
+  investigate next (e.g. the user needs to confirm the correct recipe name for a
+  private dependency, or the upstream build system has non-standard behavior that
+  requires reading the upstream docs).
 
-## 修既有 recipe（不是從零產生）
+## Fixing an existing recipe (not generating from scratch)
 
-如果使用者給的是一個「已經存在、build 會失敗」的 `.bb`/`.bbappend` 路徑，跳過第 1–4 節，直接從第 5 節的 build-fix loop 開始。
+If the user gives you the path to an existing `.bb`/`.bbappend` that fails to
+build, skip sections 1–4 and start straight from the build-fix loop in
+section 5.
 
-## 輔助工具
+## Helper tools
 
-- `scripts/run_in_env.sh <cmd>` —— 先 source 專案的 Yocto+SDK 環境再執行 `<cmd>`，所有一次性 bitbake 家族指令都走這支（見第 0a 節）。
-- `scripts/build_loop.sh <pn> <n>` —— 跑一輪 build（會自己 source 環境），存 log 並印出濃縮錯誤摘要。
-- `scripts/env_setup.sh` —— 上面兩支共用的環境解析邏輯（sourceable，不直接執行）。
-- `.yocto-recipe-gen.conf` —— 工作目錄下的設定檔，用 `ENV_SETUP=` 指向使用者的環境腳本。
+- `scripts/run_in_env.sh <cmd>` — source the project's Yocto+SDK environment,
+  then run `<cmd>`; all one-off bitbake-family commands go through this (see 0a).
+- `scripts/build_loop.sh <pn> <n>` — run one build iteration (sources the
+  environment itself), save the log, and print the condensed error summary.
+- `scripts/env_setup.sh` — the shared environment-resolution logic used by the
+  two above (sourceable, not executed directly).
+- `.yocto-recipe-gen.conf` — the config file in the working dir; use
+  `ENV_SETUP=` to point at the user's environment script.
 
-## 參考資料
+## Reference material
 
-- `references/recipe-syntax.md` —— BitBake recipe 常用變數速查
-- `references/bbclasses.md` —— build system → inherit class 對照表與各自的坑
-- `references/error-fix-map.md` —— build 失敗症狀 → 成因 → 修法
-- `references/src-uri-fetchers.md` —— 各種 SRC_URI fetcher 語法（git/wget/file/externalsrc…）
-- `references/license-guide.md` —— LICENSE / LIC_FILES_CHKSUM 撰寫原則
-- `templates/*.bb.tmpl` —— 各 build system 的乾淨 recipe 骨架
+- `references/recipe-syntax.md` — quick reference for common BitBake recipe variables
+- `references/bbclasses.md` — build system → inherit-class mapping and each one's pitfalls
+- `references/error-fix-map.md` — build-failure symptom → cause → fix
+- `references/src-uri-fetchers.md` — SRC_URI fetcher syntax (git/wget/file/externalsrc…)
+- `references/license-guide.md` — principles for writing LICENSE / LIC_FILES_CHKSUM
+- `templates/*.bb.tmpl` — clean recipe skeletons per build system

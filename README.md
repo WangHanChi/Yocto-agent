@@ -1,109 +1,184 @@
 # yocto-recipe-gen
 
-一個給 [OpenCode](https://opencode.ai) 用的 [Agent Skill](https://agentskills.io)，讓
-Qwen（或其他你設定好的 model）能根據你給的原始碼——git 網址、tar.gz（URL 或本機路徑）、
-或本機資料夾——自動產生一份 Yocto/OpenEmbedded BitBake recipe，並且用真實的 `bitbake`
-build 結果當 ground truth，跑一個「build → 讀錯誤 → 修 recipe」的自動修復迴圈，直到 build
-成功或超過重試上限為止。
+**English** | [繁體中文](README.zh-TW.md)
 
-這個 skill 本身只是一組給 LLM 讀的指示文件（`SKILL.md`）加上幾支輔助 script，**執行時
-仍然需要你自己已經有一個初始化好的 Yocto/poky build 環境**（`source oe-init-build-env`
-過），skill 不會幫你建立整套 poky。
+An [Agent Skill](https://agentskills.io) for [OpenCode](https://opencode.ai)
+that lets Qwen (or any model you configure) generate a Yocto/OpenEmbedded
+BitBake recipe from source you point it at — a git URL, a tar.gz (URL or local
+path), or a local directory — and then run a "build → read error → fix recipe"
+loop using real `bitbake` builds as ground truth, until the build succeeds or a
+retry budget is hit.
 
-## 這個 skill 做什麼
+The skill itself is just a set of instructions for the LLM (`SKILL.md`) plus a
+few helper scripts. **Running it still requires you to already have an
+initialized Yocto/poky build environment** (something you can `source`); the
+skill will not bootstrap a whole poky tree for you.
 
-1. **判斷輸入型態**：git URL / 壓縮檔（URL 或本機路徑）/ 本機資料夾，分別用對應方式取得
-   原始碼。本機資料夾會問清楚你要「開發模式（`externalsrc`，快但不可重現）」還是
-   「vendor tarball（打包進 layer，可重現）」。
-2. **偵測 build system**（autotools / cmake / meson / cargo / python3 / kernel module /
-   qmake / 純 Makefile），對照到正確的 bitbake class。
-3. **用 `recipetool create` 產生 baseline**，再由 agent 精修 LICENSE /
-   `LIC_FILES_CHKSUM` / `SRCREV` pin / `DEPENDS` / `do_install` 這幾個
-   `recipetool` 常常猜不準的地方。
-4. **Build-fix loop**：反覆執行 `bitbake <recipe>`，把巨大的 build log 濃縮成分類過的
-   錯誤摘要，對照內建的症狀 → 成因 → 修法對照表動手改 recipe，直到成功或達重試上限
-   （預設 8 輪），並保留每輪的完整 log 與改動紀錄。
-5. 也可以直接指向一個**已經存在但 build 失敗的 recipe**，跳過產生步驟，直接進入
-   build-fix loop。
+## What the skill does
 
-## 專案結構
+1. **Classifies the input**: git URL / archive (URL or local path) / local
+   directory, fetching the source accordingly. A local directory prompts a
+   choice between "dev mode" (`externalsrc`, fast but not reproducible) and
+   "vendor tarball" (packed into the layer, reproducible).
+2. **Detects the build system** (autotools / cmake / meson / cargo / python3 /
+   kernel module / qmake / plain Makefile) and maps it to the right bitbake
+   class.
+3. **Gets a baseline from `recipetool create`**, then the agent refines the
+   spots `recipetool` commonly gets wrong: LICENSE / `LIC_FILES_CHKSUM`, the
+   `SRCREV` pin, `DEPENDS`, and `do_install`.
+4. **Build-fix loop**: repeatedly runs `bitbake <recipe>`, condenses the
+   (often huge) build log into a categorized error summary, and edits the
+   recipe along a built-in symptom → cause → fix map, until success or the
+   retry budget (default 8 iterations), keeping each iteration's full log and a
+   record of changes.
+5. Can also point at an **existing recipe that fails to build**, skipping
+   generation and going straight into the build-fix loop.
+
+## Project layout
 
 ```
-SKILL.md                  agent 實際遵循的完整流程說明（核心檔案）
+SKILL.md                  the full workflow the agent follows (the core file)
 scripts/
-  fetch_source.sh          判斷輸入型態並把原始碼暫存下來
-  detect_build_system.py   掃描原始碼樹猜測 build system
-  license_scan.py          找授權檔、算 md5、粗略猜 SPDX 值（輔助用，非權威）
-  parse_bitbake_log.py     把 bitbake log 濃縮成分類過的錯誤摘要
-  build_loop.sh             跑「一輪」build（parse-only 檢查 + 實際 build），存 log
-references/                Yocto recipe 語法、bbclass 對照、錯誤修法對照表等背景知識
-templates/                 各 build system 的乾淨 .bb 骨架
-examples/opencode.json.example   範例 provider/agent 設定（Qwen + 建議的 bash 權限）
+  fetch_source.sh          classify the input and stage the source
+  detect_build_system.py   scan the source tree to guess the build system
+  license_scan.py          find license files, compute md5, roughly guess SPDX (aid, not authoritative)
+  parse_bitbake_log.py     condense a bitbake log into a categorized error summary
+  build_loop.sh            run one build iteration (parse-only check + real build), save the log
+  run_in_env.sh            source the project's Yocto+SDK env, then run a bitbake-family command
+  env_setup.sh             shared env-resolution logic (sourced by the two scripts above)
+references/                background: recipe syntax, bbclass mapping, error-fix map, etc.
+templates/                 clean .bb skeletons per build system
+examples/
+  opencode.json.example              example provider/agent config (Qwen + suggested bash permissions)
+  yocto-recipe-gen.conf.example      example env-config file
 ```
 
-## 安裝
+## Install
 
-OpenCode 會沿著目前目錄往上找 `.opencode/skills/<name>/SKILL.md`、
-`.claude/skills/<name>/SKILL.md`、`.agents/skills/<name>/SKILL.md`，或是全域的
-`~/.config/opencode/skills/<name>/SKILL.md`。**資料夾名稱必須等於 `SKILL.md`
-frontmatter 裡的 `name`（`yocto-recipe-gen`）**，跟這個 GitHub repo 自己的名字無關，
-所以 clone 的時候要指定目的資料夾名稱：
+This skill uses the open [`SKILL.md`](https://agentskills.io) standard, so it
+installs the same way in both OpenCode and Claude Code: it's a folder named after
+the skill dropped into a `skills/` directory the tool scans. **The folder name
+must equal the `name` in the `SKILL.md` frontmatter (`yocto-recipe-gen`)**,
+independent of this GitHub repo's own name — so specify the target folder name
+when you clone.
+
+### OpenCode
+
+OpenCode walks up from the current directory looking for
+`.opencode/skills/<name>/SKILL.md`, `.claude/skills/<name>/SKILL.md`,
+`.agents/skills/<name>/SKILL.md`, or the global
+`~/.config/opencode/skills/<name>/SKILL.md`.
 
 ```sh
-# 全域安裝（所有專案都能用）
-git clone <this-repo-url> ~/.config/opencode/skills/yocto-recipe-gen
+# Global install (available to all projects)
+git clone git@github.com:WangHanChi/Yocto-agent.git ~/.config/opencode/skills/yocto-recipe-gen
 
-# 或只裝在某個 BSP 專案裡
-git clone <this-repo-url> /path/to/your/bsp-project/.opencode/skills/yocto-recipe-gen
+# Or install into one BSP project only
+git clone git@github.com:WangHanChi/Yocto-agent.git /path/to/your/bsp-project/.opencode/skills/yocto-recipe-gen
 ```
 
-## 設定 Qwen model
+### Claude Code
 
-參考 `examples/opencode.json.example`，把它合併進你的 `opencode.json`（或
-`~/.config/opencode/opencode.json`），依你實際使用的 Qwen provider（DashScope /
-Alibaba Cloud、本機 Ollama、或其他 OpenAI-compatible endpoint）調整 `baseURL` /
-`apiKey` / model 名稱。範例裡把常用的 bitbake 系列指令設成 `allow`，`rm -rf /*`
-設成 `deny`，其餘 bash 指令預設 `ask`，可依你的信任程度調整。
+Claude Code loads skills from `~/.claude/skills/<name>/SKILL.md` (personal, all
+projects) or `.claude/skills/<name>/SKILL.md` inside a project.
 
-## 使用方式
+```sh
+# Personal install (available to all projects)
+git clone git@github.com:WangHanChi/Yocto-agent.git ~/.claude/skills/yocto-recipe-gen
 
-在一個已經 `source`d 過 build 環境的 Yocto 專案目錄下，開 OpenCode，直接跟 agent說明
-需求即可，例如：
-
-```
-幫我把 https://github.com/example/foo 這個 repo 做成一個 Yocto recipe，
-放進 meta-mylayer，並且確保它能 build 成功。
+# Or install into one BSP project only
+git clone git@github.com:WangHanChi/Yocto-agent.git /path/to/your/bsp-project/.claude/skills/yocto-recipe-gen
 ```
 
-或修一個現有的失敗 recipe：
+Then in a Claude Code session run `/skills` (or just ask for a Yocto recipe) and
+the skill is picked up automatically. The build-environment configuration below
+(`.yocto-recipe-gen.conf`) applies to both tools identically.
+
+> **Note on the model.** The Qwen provider setup below is OpenCode-specific.
+> Claude Code runs the skill on whatever model Claude Code is configured to use;
+> the skill's logic (recipe generation + build-fix loop) is model-agnostic and
+> works either way.
+
+## Configure the Qwen model (OpenCode)
+
+See `examples/opencode.json.example` and merge it into your `opencode.json` (or
+`~/.config/opencode/opencode.json`), adjusting `baseURL` / `apiKey` / model name
+for whichever Qwen provider you actually use (DashScope / Alibaba Cloud, a local
+Ollama, or another OpenAI-compatible endpoint). The example sets common bitbake
+commands to `allow`, `rm -rf /*` to `deny`, and everything else to `ask` — tune
+to your trust level.
+
+## Configure your build environment (important)
+
+Because **each agent tool call runs in a fresh shell**, an environment you
+`source`d in one command is gone by the next. So the skill re-sources your
+environment before every bitbake command. You point it at your environment
+script via a config file.
+
+Create `.yocto-recipe-gen.conf` in the directory you run the agent from (where
+you would normally `source` your env), based on
+`examples/yocto-recipe-gen.conf.example`:
+
+```sh
+# Absolute path to the script that does `source oe-init-build-env` AND
+# sources your SDK environment (cross toolchain), if you have one.
+ENV_SETUP="/home/you/yocto/setup-build-env.sh"
+# Optional args for that script, e.g. a build dir name:
+# ENV_SETUP_ARGS="build"
+```
+
+- All one-off bitbake-family commands run through `scripts/run_in_env.sh <cmd>`,
+  which sources `ENV_SETUP` first.
+- `scripts/build_loop.sh` sources it on its own, so you don't wrap that one.
+- If you only use the standard `oe-init-build-env` with no SDK, point
+  `ENV_SETUP` at a one-line wrapper (`source /path/to/poky/oe-init-build-env
+  /path/to/builddir`) or directly at poky's `oe-init-build-env`.
+
+## Usage
+
+In a Yocto project directory (one whose environment you can source), open
+OpenCode and just describe what you want, e.g.:
 
 ```
-meta-mylayer/recipes-support/foo/foo_1.0.bb 這個 recipe build 會失敗，幫我修好它。
+Make a Yocto recipe from the repo https://github.com/example/foo, put it in
+meta-mylayer, and make sure it builds.
 ```
 
-Agent 會依照 `SKILL.md` 的流程走完整個「產生 → build → 讀錯誤 → 改 → 再 build」的
-迴圈，並在結束時（不論成功或失敗）給你一份清楚的總結，包含它做了哪些關鍵判斷
-（尤其是 LICENSE，**這一項務必人工複查**）。
+Or fix an existing failing recipe:
 
-## 限制與注意事項
+```
+The recipe meta-mylayer/recipes-support/foo/foo_1.0.bb fails to build, fix it.
+```
 
-- **需要真實的 bitbake 環境**：這個 skill 不會、也不應該幫你安裝/初始化整套 poky；
-  它假設你已經在一個能跑 `bitbake` 的目錄裡。
-- **LICENSE 判斷是輔助，不是權威**：`license_scan.py` 只是關鍵字比對，任何自動判斷出的
-  授權欄位在正式使用前都需要人工複查，這在 `SKILL.md`／`references/license-guide.md`
-  裡有明確要求 agent 每次都要在總結裡列出來提醒使用者。
-- **cargo / npm / qmake5 等需要額外 layer 或工具**（`meta-nodejs`、`meta-qt5`、
-  `cargo-bitbake`）：skill 會提醒缺什麼，但不會自動幫你加 layer 或裝工具。
-- 建議把要修改的 meta-layer 放在 git 版控下，build-fix loop 每輪都會建議用
-  `git diff`/`git checkout` 追蹤與回復改動。
+The agent follows the `SKILL.md` workflow through the whole
+"generate → build → read error → fix → rebuild" loop, and at the end (success or
+failure) gives you a clear summary of the key decisions it made — especially
+LICENSE, **which you must review manually**.
+
+## Limitations & notes
+
+- **Requires a real bitbake environment**: the skill will not (and should not)
+  install or initialize a whole poky tree; it assumes you're in a directory where
+  bitbake can run.
+- **The LICENSE call is an aid, not authoritative**: `license_scan.py` is only
+  keyword matching; any auto-detected license field needs manual review before
+  production use. `SKILL.md` / `references/license-guide.md` require the agent to
+  surface this in every summary.
+- **cargo / npm / qmake5 need extra layers or tools** (`meta-nodejs`,
+  `meta-qt5`, `cargo-bitbake`): the skill will flag what's missing but won't add
+  layers or install tools for you.
+- Keep the meta-layer you're modifying under git; the build-fix loop recommends
+  `git diff`/`git checkout` each iteration to track and revert changes.
 
 ## Roadmap
 
-- 整合 `devtool` 工作流程（`devtool add`/`devtool build` 取代部分手動步驟）。
-- `cargo-bitbake` 自動呼叫，取代目前需要手動產生 crate SRC_URI 清單的步驟。
-- 批次模式：一次處理多個相依 recipe（例如一個上游 mono-repo 拆多個 package）。
-- ptest 專屬的失敗診斷與修復流程。
+- Integrate the `devtool` workflow (`devtool add`/`devtool build` to replace some
+  manual steps).
+- Auto-invoke `cargo-bitbake`, replacing the currently-manual crate SRC_URI list.
+- Batch mode: handle multiple interdependent recipes at once (e.g. an upstream
+  mono-repo split into several packages).
+- Dedicated ptest failure diagnosis and repair flow.
 
 ## License
 
-MIT，見 [LICENSE](LICENSE)。
+MIT, see [LICENSE](LICENSE).

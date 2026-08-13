@@ -1,27 +1,30 @@
-# Build 失敗症狀 → 成因 → 修法
+# Build-Failure Symptom → Cause → Fix
 
-`scripts/parse_bitbake_log.py` 的分類（category）對應到下面的表格。每輪 build-fix loop
-失敗時，先看 category，再照這裡的方向動手，不要每次都從零開始重新分析 log。
+The categories emitted by `scripts/parse_bitbake_log.py` map to the table below.
+When a build-fix loop iteration fails, look at the category first, then act
+along the direction here — don't re-analyze the log from scratch every time.
 
-| category | 常見成因 | 修法 |
+| category | Common cause | Fix |
 |---|---|---|
-| `fetch-checksum-mismatch` | `SRC_URI[sha256sum]` 寫錯；或 tarball URL 指到一個會變動內容的位置（例如 GitHub 的 auto-generated tarball 在同一 tag 下有時內容會變）；或用 `SRCREV` 抓 git 但寫的 hash 不對 | 重新用 `sha256sum <下載下來的檔案>` 算出正確值更新；git 來源改抓 `git rev-parse HEAD` 的實際值。 |
-| `fetch-failure` | SRC_URI 語法錯（少了 `protocol=https`、branch 名打錯）；URL 本身失效；或環境設了 `BB_NO_NETWORK=1` 但 `DL_DIR` 裡沒有預先快取好的來源 | 檢查 SRC_URI 語法對照 `references/src-uri-fetchers.md`；離線環境要確認 `DL_DIR` 已有對應檔案。 |
-| `configure-missing-tool` | `do_configure` 呼叫的 host 端工具（如 `pkg-config`、`autoconf`、某個 `*-native` 套件）不存在 | 把該工具對應的 recipe 加進 `DEPENDS`，通常是 `<pkg>-native`；用 `bitbake-layers show-recipes <pkg>` 確認正確 recipe 名稱。 |
-| `compile-missing-header` | 缺少提供該 header 的 `-dev` 套件 | 找出 header 屬於哪個上游函式庫，把對應 recipe 加進 `DEPENDS`（例如 `zlib.h` → `DEPENDS += "zlib"`）。 |
-| `link-missing-lib` | 同上，但發生在連結階段；或 `PACKAGECONFIG` 沒開啟需要的功能 | 加 `DEPENDS`；檢查是否需要調整 `PACKAGECONFIG`。 |
-| `install-no-files` | 上游 build system 的 install target 跟預期路徑不同，`do_install` 沒把東西放進 `${D}`；或 `FILES:${PN}` 沒涵蓋實際安裝路徑 | 先手動在 stage 目錄跑一次上游的 install 指令確認實際輸出路徑，再對應調整 `do_install` 或 `FILES:${PN}`。 |
-| `qa-issue` | insane.bbclass 檢查到 packaging 問題：rpath 指向 build 目錄、binary 被上游自己 strip 過、buildpaths 洩漏、`.la` 檔案殘留等 | 優先修根因（例如加 `EXTRA_OECONF = "--disable-static"` 消除 `.la`／關掉上游自己的 strip）。只有能清楚說明安全性時才用 `INSANE_SKIP:${PN} += "already-stripped"` 之類的例外，並在 recipe 留 comment 講清楚為什麼。 |
-| `license-checksum-mismatch` | 授權檔內容跟 recipe 裡的 md5 對不上 | `md5sum <授權檔>` 重算更新；同時確認 `LICENSE` 欄位有沒有需要跟著改（授權檔內容變了可能代表授權也換了）。 |
-| `recipe-name-collision` | 新 recipe 的 `PN` 跟其他 layer 裡已有的 recipe 撞名 | 換一個更明確的 `PN`，或用 `BBFILE_PRIORITY` 調整自己 layer 的優先權（後者只在你確定要覆蓋別的 layer 時用）。 |
-| `parse-error` | recipe 語法錯、變數名打錯、`inherit` 了不存在的 class | 用 `bitbake -e <pn>` 直接看完整展開後的錯誤訊息，通常會指出確切行號。 |
-| `ptest-failure` | 套件本身的測試邏輯失敗，可能跟 cross-compile 環境有關（測試假設 host==target） | 先確認是不是已知的 upstream cross-compile 測試限制，必要時在 recipe 排除特定測試，而不是整個關掉 ptest。 |
-| `task-failed`（無其他更細分類時的 fallback） | 泛用訊息，實際原因要看該 task 前面幾行的詳細輸出 | 針對訊息裡指出的 `do_xxx` task，往上讀更多 context；必要時直接看 `${WORKDIR}/temp/log.do_xxx` 全文。 |
+| `fetch-checksum-mismatch` | `SRC_URI[sha256sum]` is wrong; or the tarball URL points at something whose contents can change (e.g. GitHub's auto-generated tarballs sometimes differ for the same tag); or you're fetching git via `SRCREV` but the hash is wrong | Recompute the correct value with `sha256sum <the downloaded file>` and update it; for git sources use the actual value of `git rev-parse HEAD`. |
+| `fetch-failure` | SRC_URI syntax error (missing `protocol=https`, wrong branch name); the URL itself is dead; or `BB_NO_NETWORK=1` is set but the source isn't pre-cached in `DL_DIR` | Check SRC_URI syntax against `references/src-uri-fetchers.md`; for offline environments confirm the file is already in `DL_DIR`. |
+| `configure-missing-tool` | A host-side tool that `do_configure` calls (e.g. `pkg-config`, `autoconf`, some `*-native` package) is missing | Add the recipe for that tool to `DEPENDS`, usually `<pkg>-native`; confirm the correct recipe name with `bitbake-layers show-recipes <pkg>`. |
+| `compile-missing-header` | Missing the `-dev` package that provides the header | Find which upstream library the header belongs to and add its recipe to `DEPENDS` (e.g. `zlib.h` → `DEPENDS += "zlib"`). |
+| `link-missing-lib` | Same as above but at the link stage; or `PACKAGECONFIG` didn't enable the needed feature | Add `DEPENDS`; check whether `PACKAGECONFIG` needs adjusting. |
+| `install-no-files` | The upstream build system's install target puts files somewhere other than expected, so `do_install` doesn't populate `${D}`; or `FILES:${PN}` doesn't cover the actual install paths | First manually run the upstream install command against the staged dir to confirm the real output paths, then adjust `do_install` or `FILES:${PN}` accordingly. |
+| `qa-issue` | insane.bbclass detected a packaging problem: rpath pointing into the build dir, a binary upstream stripped itself, buildpaths leaking, leftover `.la` files, etc. | Fix the root cause first (e.g. `EXTRA_OECONF = "--disable-static"` to drop `.la`, or disable upstream's own strip). Only use an exception like `INSANE_SKIP:${PN} += "already-stripped"` when you can clearly justify it as safe, and leave a recipe comment explaining why. |
+| `license-checksum-mismatch` | The license file contents don't match the md5 in the recipe | Recompute with `md5sum <license file>` and update; also confirm whether the `LICENSE` field needs to change (changed license text may mean the license itself changed). |
+| `recipe-name-collision` | The new recipe's `PN` collides with an existing recipe in another layer | Pick a more specific `PN`, or use `BBFILE_PRIORITY` to adjust your layer's priority (only the latter when you deliberately intend to override another layer). |
+| `parse-error` | Recipe syntax error, a mistyped variable name, or `inherit` of a nonexistent class | Run `bitbake -e <pn>` to see the full expanded error message, which usually points at the exact line. |
+| `ptest-failure` | The package's own test logic failed, possibly related to the cross-compile environment (tests assume host == target) | First confirm whether it's a known upstream cross-compile test limitation; if so, exclude the specific test in the recipe rather than disabling ptest entirely. |
+| `task-failed` (fallback when no finer category matched) | Generic message; the real cause is in the lines just before this one for that task | For the `do_xxx` task named in the message, read more context above it; if needed, read the full `${WORKDIR}/temp/log.do_xxx`. |
 
-## 一般原則
+## General principles
 
-1. **一次只改一件事**，改完立刻重跑，才知道是不是這個改動真的解決問題。
-2. 同一個錯誤出現第二次、但你已經改過對應項目 → 表示你的假設可能錯了，換個角度看 log，
-   不要重覆套用同一個修法。
-3. QA 類錯誤（`qa-issue`）幾乎都代表真的有 packaging 問題，不要為了讓 build 過而濫用
-   `INSANE_SKIP`。
+1. **Change only one thing at a time**, then rerun immediately, so you know
+   whether that change actually solved the problem.
+2. If the same error appears a second time but you've already changed the
+   corresponding item → your assumption is probably wrong; look at the log from a
+   different angle rather than re-applying the same fix.
+3. QA-category errors (`qa-issue`) almost always mean packaging is genuinely
+   wrong — don't abuse `INSANE_SKIP` just to make the build pass.

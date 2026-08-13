@@ -1,23 +1,26 @@
-# Build System → bbclass 對照表
+# Build System → bbclass Mapping
 
-`scripts/detect_build_system.py` 判斷出的 `build_system` 值對應到下表，agent 依此決定
-`inherit` 哪個 class，並注意各自常見的坑。
+The `build_system` value produced by `scripts/detect_build_system.py` maps to
+the table below. The agent uses this to decide which class to `inherit`, and to
+watch for each class's common pitfalls.
 
-| build_system | inherit | 常見坑 |
+| build_system | inherit | Common pitfalls |
 |---|---|---|
-| `autotools` | `autotools` | 上游若不支援 out-of-tree build（`./configure` 只能在原始碼目錄跑），改用 `inherit autotools-brokensep`。跨編譯常見卡在 `config.sub`/`config.guess` 太舊 → `inherit autotools` 通常會自動更新，若沒有要手動 `EXTRA_AUTORECONF`。 |
-| `cmake` | `cmake` | 預設 generator 是 Ninja；上游若寫死 `find_package` 找系統路徑，跨編譯會抓到 host 的庫，要確認上游 CMake 有正確用 `CMAKE_FIND_ROOT_PATH`（OE 的 toolchain file 有設，但上游的 CMakeLists.txt 邏輯不對時還是會踩雷）。`EXTRA_OECMAKE` 加額外 `-D` 參數。 |
-| `meson` | `meson` | 跟 cmake 類似的跨編譯 find 陷阱；`EXTRA_OEMESON` 加參數；meson option 用 `-Dfoo=enabled/disabled` 而非 autotools 的 `--enable-foo`。 |
-| `cargo` | `cargo` | **需要額外工具**：用 `cargo-bitbake`（獨立安裝的工具，不在 poky 內建）從專案的 `Cargo.lock` 產生完整的 crate SRC_URI 清單，手動列 crates 幾乎不可行。沒有網路時（`BB_NO_NETWORK`）要確保所有 crate 都已經在 SRC_URI 裡列出並被快取，不能依賴 build 時連網抓 crates.io。 |
-| `python3` | `python_setuptools_build_meta` / `python_hatchling` / `python_flit_core`（依 `pyproject.toml` 裡 `[build-system].build-backend` 而定）或舊式 `setuptools3`（只有 `setup.py`、沒有 `pyproject.toml` 時） | 先看 `pyproject.toml` 的 `build-backend` 字串再選 class，猜錯會在 do_compile 直接失敗說找不到 backend。Runtime python 相依要另外查 `RDEPENDS:${PN}`，setuptools 不會自動幫你加。 |
-| `npm` | 需要 `meta-nodejs` layer 提供的 `node-npm`/`npm` bbclass（不在 oe-core） | 先確認目標環境有沒有引入 `meta-nodejs`；沒有的話要先跟使用者確認要不要加這個 layer，而不是假裝 oe-core 內建支援。 |
-| `kernel-module` | `module`（來自 `meta`/oe-core 的 `module.bbclass`） | 一定要有 `inherit module`，且要能找到目標 kernel 的 `KERNEL_SRC`/staging（通常透過同一個 build 裡已經 build 過的 `virtual/kernel`）；`KERNEL_MODULE_AUTOLOAD`/`KERNEL_MODULE_PROBECONF` 視需求設定開機自動載入。 |
-| `qmake5` | `qmake5` | 需要目標環境已經有 `meta-qt5`（Qt 已不在 oe-core），先確認 layer 是否存在。 |
-| `generic-makefile` | 不 inherit 任何 class，手動寫 `do_compile`/`do_install` | 最容易漏東西的一種：CFLAGS/LDFLAGS 交叉編譯旗標要自己透過 `TARGET_CC_ARCH`/`${CC}` 傳進 make，不能假設上游 Makefile 有正確處理 cross-compile prefix。`do_install` 一定要手動 `install -d`/`install -m` 把產物放進 `${D}`，class 不會幫你做。 |
-| `unknown` | — | `detect_build_system.py` 沒把握時，先看 `recipetool create` 自己猜出什麼 class，通常比純規則式偵測準；仍不確定就打開原始碼樹自己看有沒有隱藏的 build 腳本（`build.sh`、`bootstrap.sh`…）。 |
+| `autotools` | `autotools` | If upstream doesn't support out-of-tree builds (`./configure` only runs in the source dir), use `inherit autotools-brokensep` instead. Cross-compilation often gets stuck on a stale `config.sub`/`config.guess` → `inherit autotools` usually refreshes them automatically; if not, do it via `EXTRA_AUTORECONF`. |
+| `cmake` | `cmake` | The default generator is Ninja. If upstream hardcodes `find_package` to search system paths, cross-compilation may pick up the host's libraries — verify the upstream CMake correctly uses `CMAKE_FIND_ROOT_PATH` (OE's toolchain file sets it, but you still get bitten when the upstream CMakeLists.txt logic is wrong). Add extra `-D` args via `EXTRA_OECMAKE`. |
+| `meson` | `meson` | Same cross-compile find traps as cmake; add args via `EXTRA_OEMESON`; meson options use `-Dfoo=enabled/disabled` rather than autotools' `--enable-foo`. |
+| `cargo` | `cargo` | **Needs an extra tool:** use `cargo-bitbake` (a standalone tool, NOT bundled in poky) to generate the full crate SRC_URI list from the project's `Cargo.lock` — hand-listing crates is basically infeasible. When offline (`BB_NO_NETWORK`), ensure every crate is listed in SRC_URI and cached; you can't rely on fetching from crates.io at build time. |
+| `python3` | `python_setuptools_build_meta` / `python_hatchling` / `python_flit_core` (depending on the `[build-system].build-backend` in `pyproject.toml`), or the older `setuptools3` (only when there's just a `setup.py` and no `pyproject.toml`) | Read the `build-backend` string in `pyproject.toml` before choosing the class; a wrong choice fails in do_compile complaining it can't find the backend. Runtime python deps must be added separately via `RDEPENDS:${PN}` — setuptools won't add them for you. |
+| `npm` | needs the `node-npm`/`npm` bbclass from the `meta-nodejs` layer (not in oe-core) | First confirm whether the target has `meta-nodejs` pulled in; if not, confirm with the user whether to add that layer rather than pretending oe-core supports it natively. |
+| `kernel-module` | `module` (the `module.bbclass` from `meta`/oe-core) | Must have `inherit module`, and must be able to locate the target kernel's `KERNEL_SRC`/staging (usually via a `virtual/kernel` already built in the same build). Set `KERNEL_MODULE_AUTOLOAD`/`KERNEL_MODULE_PROBECONF` if you want the module auto-loaded at boot. |
+| `qmake5` | `qmake5` | Requires the target to already have `meta-qt5` (Qt is no longer in oe-core); confirm the layer exists first. |
+| `generic-makefile` | inherit nothing; hand-write `do_compile`/`do_install` | The easiest kind to omit things from: CFLAGS/LDFLAGS cross-compile flags must be threaded into make yourself via `TARGET_CC_ARCH`/`${CC}`; don't assume the upstream Makefile handles the cross-compile prefix correctly. `do_install` must manually `install -d`/`install -m` the artifacts into `${D}` — the class won't do it for you. |
+| `unknown` | — | When `detect_build_system.py` isn't confident, first see what class `recipetool create` itself infers — usually more accurate than pure rule-based detection. If still unsure, open the source tree and look for hidden build scripts (`build.sh`, `bootstrap.sh`, …). |
 
-## 通則
+## General rules
 
-- 能用標準 class 就不要手刻 `do_compile`/`do_install` —— 標準 class 已經處理好交叉編譯旗標、
-  parallel make、staging 等細節，手刻容易漏掉這些。
-- 只有 `generic-makefile` 或真的很特殊的上游 build 流程，才需要整段覆寫。
+- If a standard class fits, don't hand-write `do_compile`/`do_install` — standard
+  classes already handle cross-compile flags, parallel make, staging, etc., and
+  hand-rolling tends to drop those details.
+- Only `generic-makefile` or genuinely unusual upstream build flows need a full
+  task override.
