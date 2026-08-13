@@ -1,0 +1,21 @@
+SUMMARY = "<<SUMMARY>>"
+DESCRIPTION = "<<DESCRIPTION>>"
+HOMEPAGE = "<<HOMEPAGE>>"
+LICENSE = "<<LICENSE>>"
+LIC_FILES_CHKSUM = "file://<<LICENSE_FILE>>;md5=<<MD5>>"
+
+SRC_URI = "<<SRC_URI>>"
+SRCREV = "<<SRCREV>>"
+S = "${WORKDIR}/git"
+
+DEPENDS = "<<DEPENDS>>"
+# RDEPENDS:${PN} = "<<RUNTIME_DEPS>>"
+
+inherit cmake
+
+EXTRA_OECMAKE = ""
+
+# PACKAGECONFIG ??= ""
+# PACKAGECONFIG[<flag>] = "-DENABLE_<FLAG>=ON,-DENABLE_<FLAG>=OFF,<extra-DEPENDS>"
+
+# FILES:${PN} += ""

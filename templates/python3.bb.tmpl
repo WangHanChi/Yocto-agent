@@ -1,0 +1,23 @@
+SUMMARY = "<<SUMMARY>>"
+DESCRIPTION = "<<DESCRIPTION>>"
+HOMEPAGE = "<<HOMEPAGE>>"
+LICENSE = "<<LICENSE>>"
+LIC_FILES_CHKSUM = "file://<<LICENSE_FILE>>;md5=<<MD5>>"
+
+SRC_URI = "<<SRC_URI>>"
+SRCREV = "<<SRCREV>>"
+S = "${WORKDIR}/git"
+
+DEPENDS = "<<DEPENDS>>"
+# RDEPENDS:${PN} = "<<RUNTIME_DEPS>>"   # e.g. python3-core, plus anything
+                                        # imported at runtime that setuptools
+                                        # won't auto-declare for you.
+
+# Pick ONE based on pyproject.toml's [build-system].build-backend:
+#   setuptools.build_meta      -> inherit python_setuptools_build_meta
+#   hatchling.build            -> inherit python_hatchling
+#   flit_core.buildapi         -> inherit python_flit_core
+#   (no pyproject.toml, only setup.py) -> inherit setuptools3
+inherit python_setuptools_build_meta
+
+# FILES:${PN} += ""

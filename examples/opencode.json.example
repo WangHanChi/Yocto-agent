@@ -1,0 +1,41 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "qwen": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "apiKey": "{env:DASHSCOPE_API_KEY}"
+      },
+      "models": {
+        "qwen3-coder-plus": {
+          "name": "Qwen3 Coder Plus"
+        }
+      }
+    }
+  },
+  "agent": {
+    "yocto-bsp": {
+      "description": "Generates and repairs Yocto/OpenEmbedded BitBake recipes using the yocto-recipe-gen skill.",
+      "model": "qwen/qwen3-coder-plus",
+      "temperature": 0.2,
+      "prompt": "You are a senior Yocto/OpenEmbedded BSP engineer. When asked to create or fix a bitbake recipe, use the yocto-recipe-gen skill and follow its build-fix loop exactly. Always run real bitbake builds to validate — never claim a recipe works without a passing build log.",
+      "permission": {
+        "bash": {
+          "bitbake*": "allow",
+          "bitbake-layers*": "allow",
+          "recipetool*": "allow",
+          "devtool*": "allow",
+          "git *": "allow",
+          "curl *": "allow",
+          "tar *": "allow",
+          "md5sum *": "allow",
+          "sha256sum *": "allow",
+          "rm -rf /*": "deny",
+          "*": "ask"
+        },
+        "edit": "allow"
+      }
+    }
+  }
+}

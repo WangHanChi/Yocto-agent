@@ -1,0 +1,10 @@
+# scratch/log dirs created by the skill's scripts at runtime
+yocto-recipe-gen-logs/
+.yocto-recipe-gen-scratch/
+*.log
+
+# editor/OS cruft
+.DS_Store
+*.swp
+__pycache__/
+*.pyc

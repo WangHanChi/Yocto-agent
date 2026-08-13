@@ -1,0 +1,20 @@
+SUMMARY = "<<SUMMARY>>"
+DESCRIPTION = "<<DESCRIPTION>>"
+HOMEPAGE = "<<HOMEPAGE>>"
+LICENSE = "<<LICENSE>>"
+LIC_FILES_CHKSUM = "file://<<LICENSE_FILE>>;md5=<<MD5>>"
+
+SRC_URI = "<<SRC_URI>>"
+SRCREV = "<<SRCREV>>"
+S = "${WORKDIR}/git"
+
+inherit module
+
+EXTRA_OEMAKE += "KERNEL_SRC=${STAGING_KERNEL_DIR}"
+
+# Load the module automatically on boot (module base name, no .ko suffix):
+# KERNEL_MODULE_AUTOLOAD += "<<MODULE_NAME>>"
+# KERNEL_MODULE_PROBECONF += "<<MODULE_NAME>>"
+# module_conf_<<MODULE_NAME>> = "options <<MODULE_NAME>> <param>=<value>"
+
+# FILES:${PN} += ""

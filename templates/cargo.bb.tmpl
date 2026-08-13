@@ -1,0 +1,23 @@
+SUMMARY = "<<SUMMARY>>"
+DESCRIPTION = "<<DESCRIPTION>>"
+HOMEPAGE = "<<HOMEPAGE>>"
+LICENSE = "<<LICENSE>>"
+LIC_FILES_CHKSUM = "file://<<LICENSE_FILE>>;md5=<<MD5>>"
+
+# NOTE: hand-listing crate SRC_URI entries does not scale. Generate this
+# recipe's crate:// SRC_URI block with the external `cargo-bitbake` tool
+# run against the project's Cargo.lock, then merge the result below. See
+# references/bbclasses.md (cargo row).
+SRC_URI = "<<SRC_URI>> \
+    <<CARGO_CRATE_URIS>>"
+SRCREV = "<<SRCREV>>"
+S = "${WORKDIR}/git"
+
+DEPENDS = "<<DEPENDS>>"
+
+inherit cargo
+
+# If building fully offline (BB_NO_NETWORK=1), every crate referenced by
+# Cargo.lock must already be listed in SRC_URI above and present in DL_DIR.
+
+# FILES:${PN} += ""

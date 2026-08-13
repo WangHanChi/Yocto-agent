@@ -1,0 +1,25 @@
+SUMMARY = "<<SUMMARY>>"
+DESCRIPTION = "<<DESCRIPTION>>"
+HOMEPAGE = "<<HOMEPAGE>>"
+LICENSE = "<<LICENSE>>"
+LIC_FILES_CHKSUM = "file://<<LICENSE_FILE>>;md5=<<MD5>>"
+
+SRC_URI = "<<SRC_URI>>"
+SRCREV = "<<SRCREV>>"
+# S defaults to ${WORKDIR}/git for the git fetcher; override if the tarball
+# fetcher is used instead and unpacks to a different top-level dir name.
+# S = "${WORKDIR}/<<UNPACK_DIR>>"
+
+DEPENDS = "<<DEPENDS>>"
+# RDEPENDS:${PN} = "<<RUNTIME_DEPS>>"
+
+inherit autotools
+# If upstream doesn't support out-of-tree builds:
+# inherit autotools-brokensep
+
+EXTRA_OECONF = ""
+
+# PACKAGECONFIG ??= ""
+# PACKAGECONFIG[<flag>] = "--enable-<flag>,--disable-<flag>,<extra-DEPENDS>"
+
+# FILES:${PN} += ""

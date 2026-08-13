@@ -1,0 +1,21 @@
+SUMMARY = "<<SUMMARY>>"
+DESCRIPTION = "<<DESCRIPTION>>"
+HOMEPAGE = "<<HOMEPAGE>>"
+LICENSE = "<<LICENSE>>"
+LIC_FILES_CHKSUM = "file://<<LICENSE_FILE>>;md5=<<MD5>>"
+
+SRC_URI = "<<SRC_URI>>"
+SRCREV = "<<SRCREV>>"
+S = "${WORKDIR}/git"
+
+DEPENDS = "<<DEPENDS>>"
+# RDEPENDS:${PN} = "<<RUNTIME_DEPS>>"
+
+inherit meson
+
+EXTRA_OEMESON = ""
+
+# PACKAGECONFIG ??= ""
+# PACKAGECONFIG[<flag>] = "-D<flag>=enabled,-D<flag>=disabled,<extra-DEPENDS>"
+
+# FILES:${PN} += ""

@@ -1,0 +1,27 @@
+SUMMARY = "<<SUMMARY>>"
+DESCRIPTION = "<<DESCRIPTION>>"
+HOMEPAGE = "<<HOMEPAGE>>"
+LICENSE = "<<LICENSE>>"
+LIC_FILES_CHKSUM = "file://<<LICENSE_FILE>>;md5=<<MD5>>"
+
+SRC_URI = "<<SRC_URI>>"
+SRCREV = "<<SRCREV>>"
+S = "${WORKDIR}/git"
+
+DEPENDS = "<<DEPENDS>>"
+
+# No standard bbclass fits a bare Makefile project — cross-compile flags
+# must be threaded through explicitly. Do NOT assume the upstream Makefile
+# already handles cross-compilation correctly; verify CC/AR/etc are honored.
+do_compile() {
+    oe_runmake CC="${CC}" AR="${AR}" LD="${LD}" CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}"
+}
+
+do_install() {
+    install -d ${D}${bindir}
+    install -m 0755 ${B}/<<BINARY_NAME>> ${D}${bindir}/<<BINARY_NAME>>
+    # Add install -d / install -m lines for any additional installed
+    # files (libs, headers, config, systemd units, etc).
+}
+
+# FILES:${PN} += ""

@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# build_loop.sh — run ONE iteration of the build-fix loop for a recipe.
+#
+# This does not loop by itself: the calling agent is the loop. Call this
+# once per iteration, read the condensed output, edit the recipe, call
+# again. See SKILL.md section 5.
+#
+# Usage: build_loop.sh <pn> <iteration_number> [--cleansstate]
+#
+# Exit codes:
+#   0   build succeeded
+#   1   build (or parse) failed — see condensed summary on stdout
+#   2   usage / environment error (bitbake not found, etc.)
+set -uo pipefail
+
+PN="${1:-}"
+ITER="${2:-}"
+CLEAN="${3:-}"
+
+if [[ -z "$PN" || -z "$ITER" ]]; then
+  echo "usage: build_loop.sh <pn> <iteration_number> [--cleansstate]" >&2
+  exit 2
+fi
+
+command -v bitbake >/dev/null 2>&1 || {
+  echo "ERROR: bitbake not found on PATH — is a Yocto build env sourced (oe-init-build-env)?" >&2
+  exit 2
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_DIR="$(pwd)/yocto-recipe-gen-logs/${PN}"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/iter-${ITER}.log"
+
+echo "[build_loop] iteration ${ITER} for ${PN}" | tee "$LOG_FILE"
+
+# Fast path: parse-only check first. Cheap, and catches syntax/undefined
+# variable errors without waiting on a real compile.
+echo "[build_loop] step 1/2: bitbake -e ${PN} (parse-only check)" | tee -a "$LOG_FILE"
+if ! bitbake -e "$PN" >>"$LOG_FILE" 2>&1; then
+  echo "[build_loop] parse-only check FAILED" | tee -a "$LOG_FILE"
+  python3 "$SCRIPT_DIR/parse_bitbake_log.py" "$LOG_FILE"
+  exit 1
+fi
+
+if [[ "$CLEAN" == "--cleansstate" ]]; then
+  echo "[build_loop] step 2/3: bitbake -c cleansstate ${PN}" | tee -a "$LOG_FILE"
+  bitbake -c cleansstate "$PN" >>"$LOG_FILE" 2>&1
+fi
+
+echo "[build_loop] step 2/2: bitbake ${PN}" | tee -a "$LOG_FILE"
+if bitbake "$PN" >>"$LOG_FILE" 2>&1; then
+  echo "[build_loop] SUCCESS — ${PN} built cleanly (log: ${LOG_FILE})"
+  exit 0
+else
+  echo "[build_loop] BUILD FAILED (log: ${LOG_FILE})"
+  python3 "$SCRIPT_DIR/parse_bitbake_log.py" "$LOG_FILE"
+  exit 1
+fi
