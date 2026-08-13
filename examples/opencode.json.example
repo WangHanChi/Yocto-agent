@@ -22,6 +22,8 @@
       "prompt": "You are a senior Yocto/OpenEmbedded BSP engineer. When asked to create or fix a bitbake recipe, use the yocto-recipe-gen skill and follow its build-fix loop exactly. Always run real bitbake builds to validate — never claim a recipe works without a passing build log.",
       "permission": {
         "bash": {
+          "*run_in_env.sh*": "allow",
+          "*build_loop.sh*": "allow",
           "bitbake*": "allow",
           "bitbake-layers*": "allow",
           "recipetool*": "allow",

@@ -1,0 +1,17 @@
+# yocto-recipe-gen.conf — project-local config for the yocto-recipe-gen skill.
+#
+# Copy this to `.yocto-recipe-gen.conf` in the directory you run the agent
+# from (your Yocto project root / where you'd normally `source` your env),
+# and edit ENV_SETUP to point at YOUR environment setup script — the one
+# that does `source oe-init-build-env` AND sources the SDK environment.
+#
+# This file is sourced as plain shell by scripts/env_setup.sh, so ordinary
+# VAR="value" assignments are all you need.
+
+# Absolute path to your project's environment setup script. This is the
+# single entry point the skill will `source` before every bitbake command.
+ENV_SETUP="/home/youruser/yocto/setup-build-env.sh"
+
+# Optional: arguments to pass to that script (e.g. a build dir name that
+# oe-init-build-env expects). Leave empty/unset if your script takes none.
+# ENV_SETUP_ARGS="build"

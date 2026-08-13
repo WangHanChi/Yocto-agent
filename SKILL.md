@@ -17,15 +17,34 @@ metadata:
 
 ## 0. 前置檢查（每次啟動一定要做）
 
-1. 確認目前是在一個已經 `source oe-init-build-env` 過的 build 目錄裡，或使用者已指出 build 目錄位置：
-   - 檢查 `bitbake --version` 可執行。
-   - 檢查 `${BUILDDIR}/conf/bblayers.conf` 存在。
-   - 若都不存在，**停下來**，向使用者說明需要先進到一個已初始化的 poky/OE build 環境（`source oe-init-build-env <builddir>`），不要自己嘗試安裝或初始化一整套 poky —— 這是使用者環境的責任。
-2. 用 `bitbake-layers show-layers` 列出目前有哪些 layer，決定新 recipe 要放進哪個 layer：
+### 0a. 環境 sourcing —— 這是最容易出錯的地方，一定先處理
+
+**你每下一個 Bash 指令都是一個全新的 shell**，前一個指令 `source` 過的環境到下一個指令就消失了。所以絕對不能「開頭 source 一次就以為之後的 bitbake 都在環境裡」——每一個真正呼叫 bitbake 的地方都必須自己先 source。這個 skill 已經幫你處理好，你只要做設定：
+
+1. 很多使用者的 Yocto 專案有一支自訂的環境腳本，它會 `source oe-init-build-env`，**而且**還會 source SDK 的環境（cross toolchain）。先確認使用者的專案是不是這種情況：
+   - 問使用者（或從專案根目錄找）那支腳本的路徑，例如 `setup-build-env.sh`、`env.sh`、`setup-environment` 之類。
+2. 把那支腳本的絕對路徑寫進**工作目錄**下的 `.yocto-recipe-gen.conf`（格式見 `examples/yocto-recipe-gen.conf.example`）：
+   ```sh
+   ENV_SETUP="/abs/path/to/使用者的/setup-build-env.sh"
+   # 若該腳本需要參數（例如 build 目錄名），再加 ENV_SETUP_ARGS="build"
+   ```
+   若使用者只用標準的 `oe-init-build-env`、沒有 SDK，就把 `ENV_SETUP` 指向一支你幫他寫的小 wrapper（內容就是 `source /path/to/poky/oe-init-build-env /path/to/builddir`），或直接指向 poky 的 `oe-init-build-env`（它可被 source）。
+3. 從此以後：
+   - **所有一次性的 bitbake 家族指令**（`bitbake-layers`、`recipetool`、`bitbake -e`、`devtool`、`oe-pkgdata-util`…）都要透過 `scripts/run_in_env.sh <指令>` 執行，例如
+     `scripts/run_in_env.sh bitbake-layers show-layers`。這支 wrapper 會先 source 你設定的環境腳本再執行指令。
+   - **`scripts/build_loop.sh` 會自己 source 環境**（讀同一個 `.yocto-recipe-gen.conf`），所以它不用再包一層 `run_in_env.sh`，直接呼叫即可。
+   - 若使用者堅持「我已經在一個 source 過的互動 shell 裡、你直接跑就好」，而環境設定檔留空，`run_in_env.sh`/`build_loop.sh` 會印出提醒並假設環境已存在——但因為每個 Bash 指令是新 shell，這通常不成立，**預設一定要設好 `.yocto-recipe-gen.conf`**。
+
+### 0b. 確認環境真的可用
+
+1. 跑 `scripts/run_in_env.sh bitbake --version`，確認 source 之後 bitbake 真的在 PATH 上。
+   - 若失敗，**停下來**，向使用者說明需要先確認那支環境腳本能正確 `source oe-init-build-env`，不要自己嘗試安裝或初始化一整套 poky —— 這是使用者環境的責任。
+2. 跑 `scripts/run_in_env.sh bash -c 'echo $BUILDDIR; ls $BUILDDIR/conf/bblayers.conf'` 確認 `BUILDDIR` 有被設定、`bblayers.conf` 存在。
+2. 用 `scripts/run_in_env.sh bitbake-layers show-layers` 列出目前有哪些 layer，決定新 recipe 要放進哪個 layer（記得：所有 bitbake 家族指令都要透過 `run_in_env.sh`，見 0a）：
    - 如果使用者已指定 layer，用它。
    - 否則優先找名稱像 `meta-<vendor>`、`meta-bsp`、有自己 recipes-* 目錄的自訂 layer；不要把新 recipe 塞進 `meta`/`meta-poky`/`meta-yocto-bsp` 這類上游核心層。
-   - 如果完全沒有合適的自訂 layer，用 `bitbake-layers create-layer ../meta-<name>` 建一個，並 `bitbake-layers add-layer`，但**先跟使用者確認 layer 名稱**再建立（這是使用者的專案命名，不要幫他亂取）。
-3. 確認新 recipe 的 `PN` 目前不存在（`bitbake-layers show-recipes <pn>` 或 `bitbake-layers show-overlayed`），避免跟既有 recipe 撞名。
+   - 如果完全沒有合適的自訂 layer，用 `scripts/run_in_env.sh bitbake-layers create-layer ../meta-<name>` 建一個，並 `scripts/run_in_env.sh bitbake-layers add-layer ...`，但**先跟使用者確認 layer 名稱**再建立（這是使用者的專案命名，不要幫他亂取）。
+3. 確認新 recipe 的 `PN` 目前不存在（`scripts/run_in_env.sh bitbake-layers show-recipes <pn>`），避免跟既有 recipe 撞名。
 
 ## 1. 判斷輸入型態
 
@@ -63,7 +82,7 @@ metadata:
 `recipetool` 是 openembedded-core 內建、跟你在同一個 poky checkout 裡的自動 recipe 產生工具，永遠先用它拿一份 baseline，再手動精修，而不是憑空編寫：
 
 ```sh
-recipetool create -o <pn>_<pv>.bb "<src_uri>"
+scripts/run_in_env.sh recipetool create -o <pn>_<pv>.bb "<src_uri>"
 ```
 
 `recipetool` 對 SRC_URI/build system/部分 license 猜測通常八九不離十，但**以下四項一定要人工/你自己再檢查一次，recipetool 常猜錯或猜不全**：
@@ -104,7 +123,7 @@ bitbake log 可能非常長，**永遠透過 `parse_bitbake_log.py` 的精簡摘
 
 ## 6. 成功收尾
 
-1. Build 成功後，額外跑一次 `bitbake -c package_qa <pn>`（若該 recipe 有走 package pipeline）確認沒有殘留 QA 警告。
+1. Build 成功後，額外跑一次 `scripts/run_in_env.sh bitbake -c package_qa <pn>`（若該 recipe 有走 package pipeline）確認沒有殘留 QA 警告。
 2. 用 `git diff`（若 layer 受 git 控管）整理這次新增/修改的檔案清單。
 3. 向使用者總結：
    - recipe 路徑
@@ -123,6 +142,13 @@ bitbake log 可能非常長，**永遠透過 `parse_bitbake_log.py` 的精簡摘
 ## 修既有 recipe（不是從零產生）
 
 如果使用者給的是一個「已經存在、build 會失敗」的 `.bb`/`.bbappend` 路徑，跳過第 1–4 節，直接從第 5 節的 build-fix loop 開始。
+
+## 輔助工具
+
+- `scripts/run_in_env.sh <cmd>` —— 先 source 專案的 Yocto+SDK 環境再執行 `<cmd>`，所有一次性 bitbake 家族指令都走這支（見第 0a 節）。
+- `scripts/build_loop.sh <pn> <n>` —— 跑一輪 build（會自己 source 環境），存 log 並印出濃縮錯誤摘要。
+- `scripts/env_setup.sh` —— 上面兩支共用的環境解析邏輯（sourceable，不直接執行）。
+- `.yocto-recipe-gen.conf` —— 工作目錄下的設定檔，用 `ENV_SETUP=` 指向使用者的環境腳本。
 
 ## 參考資料
 

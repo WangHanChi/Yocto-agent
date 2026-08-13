@@ -22,13 +22,28 @@ if [[ -z "$PN" || -z "$ITER" ]]; then
   exit 2
 fi
 
-command -v bitbake >/dev/null 2>&1 || {
-  echo "ERROR: bitbake not found on PATH — is a Yocto build env sourced (oe-init-build-env)?" >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Capture the invocation dir BEFORE sourcing the env — oe-init-build-env
+# cd's into BUILDDIR, and we want logs to land somewhere predictable that
+# the agent can find afterward.
+INVOKE_DIR="$(pwd)"
+
+# Source the project's Yocto + SDK environment first: this shell is fresh
+# and won't have inherited any `source` done in an earlier tool call.
+# shellcheck source=env_setup.sh
+. "$SCRIPT_DIR/env_setup.sh"
+yrg_source_env || {
+  echo "[build_loop] ERROR: could not source the Yocto environment." >&2
   exit 2
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="$(pwd)/yocto-recipe-gen-logs/${PN}"
+command -v bitbake >/dev/null 2>&1 || {
+  echo "[build_loop] ERROR: bitbake still not on PATH after sourcing the env." \
+       "Check that ENV_SETUP points at a script that sources oe-init-build-env." >&2
+  exit 2
+}
+
+LOG_DIR="${INVOKE_DIR}/yocto-recipe-gen-logs/${PN}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/iter-${ITER}.log"
 

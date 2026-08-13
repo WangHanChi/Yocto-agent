@@ -3,6 +3,10 @@ yocto-recipe-gen-logs/
 .yocto-recipe-gen-scratch/
 *.log
 
+# per-project runtime config (points at a user's local env script); the
+# tracked template lives in examples/
+.yocto-recipe-gen.conf
+
 # editor/OS cruft
 .DS_Store
 *.swp
