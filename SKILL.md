@@ -133,6 +133,24 @@ Call `scripts/fetch_source.sh <input>`. It returns a parseable summary of
 `SRC_URI_BB=`, `SRCREV=`, …). Stage the source into a scratch dir for analysis
 first — **do not write anything into a layer yet**.
 
+### For a git URL: ask which version to use before you act
+
+When the input is a git URL, **before fetching or building anything you MUST ask
+the user which version they want** — the specific tag / release / branch /
+commit to pin (the "版號"). Do not silently default to the latest commit on the
+default branch; a production BSP recipe must be pinned to a version the user
+actually chose. Ask something like:
+
+> "Which version of this repo should the recipe pin to — a specific tag/release,
+> a branch, or a particular commit? (I'll pin `SRCREV`/`PV` to whatever you
+> choose.)"
+
+- If the user names a tag/branch/commit, check it out in the staged clone and
+  derive `PV`/`SRCREV` from it (see section 2).
+- Only if the user explicitly says "just use the latest" do you fall back to the
+  default branch HEAD — and even then, still pin `SRCREV` to that exact commit
+  hash (never leave it floating), and tell the user which commit you pinned.
+
 ### Two strategies for a local-path input — always confirm which one the user wants
 
 A local directory input is common in BSP development, and there are two correct
@@ -163,14 +181,52 @@ Look up the exact syntax for both in `references/src-uri-fetchers.md`.
 - Derive PN from the repo/folder/project name, lowercased, underscores turned to
   hyphens (per recipe naming convention).
 
-## 3. Detect the build system
+## 3. Check for an existing recipe first — don't reinvent the wheel
+
+Once you know the likely `PN` (and any obvious aliases), **before drafting
+anything, check whether a recipe already exists upstream or in the available
+layers.** Writing a brand-new recipe for something oe-core or a well-known layer
+already ships is wasted effort and diverges from what the ecosystem maintains.
+Check, in order:
+
+1. **Locally available layers.** Run
+   `scripts/run_in_env.sh bitbake-layers show-recipes '*<name>*'` (and try
+   obvious aliases, e.g. with/without a `lib` prefix, `-` vs `_`). Also try
+   `scripts/run_in_env.sh oe-pkgdata-util lookup-recipe <name>` if available.
+2. **The OpenEmbedded Layer Index** — the canonical registry of upstream recipes
+   across all public layers. Search it for the package name (the web UI is at
+   `https://layers.openembedded.org/layerindex/branch/master/recipes/`; use web
+   search / WebFetch to query it). This catches recipes that live in a layer the
+   user hasn't added yet.
+3. **Upstream / meta-openembedded.** For common libraries and tools, check
+   whether `meta-oe` or another standard layer already has it.
+
+If you have no web access, do at least the local checks (step 1) and tell the
+user you couldn't consult the online layer index, so they can double-check
+before you write a duplicate.
+
+Then decide with the user:
+
+- **A recipe already exists in an added layer** → do NOT write a duplicate. Tell
+  the user it exists and where; if they need changes, prefer a `.bbappend` in
+  their own layer over a fresh recipe.
+- **A recipe exists in a layer that isn't added yet** → tell the user the layer
+  name and let them decide whether to add that layer (via `bitbake-layers
+  add-layer`) instead of vendoring a private copy. Adding the maintained layer is
+  usually better than reinventing it.
+- **Nothing exists anywhere** → proceed to write a new recipe (sections 4–6).
+
+Only skip this check when the source is clearly a private/in-house project with
+no chance of an upstream recipe (e.g. a local-dir input for the user's own code).
+
+## 4. Detect the build system
 
 Run `scripts/detect_build_system.py <stage_dir>` to get JSON:
 `{"build_system": "...", "confidence": "...", "hints": [...]}`. Cross-reference
 `references/bbclasses.md` to decide which bbclass to `inherit` and the common
 pitfalls of that class (see the table in that file).
 
-## 4. Draft the recipe — start with recipetool, don't hand-write from scratch
+## 5. Draft the recipe — start with recipetool, don't hand-write from scratch
 
 `recipetool` is the automatic recipe generator built into openembedded-core,
 living in the same poky checkout as you. Always get a baseline from it first and
@@ -189,7 +245,7 @@ them wrong or incomplete**:
    contents yourself (legal-compliance risk, see `references/license-guide.md`).
 2. `SRCREV` (is it pinned to an explicit commit rather than a branch HEAD?).
 3. `DEPENDS` (recipetool often misses build-time deps; these get filled in once
-   the build loop runs, see section 5).
+   the build loop runs, see section 6).
 4. `do_install` (non-standard build systems often need a manual override).
 
 Put the refined file at `<layer>/recipes-<category>/<pn>/<pn>_<pv>.bb`. For
@@ -197,7 +253,7 @@ Put the refined file at `<layer>/recipes-<category>/<pn>/<pn>_<pv>.bb`. For
 if nothing fits, use `recipes-support`. The `templates/` dir has clean skeletons
 per build system to cross-check against so you don't omit required fields.
 
-## 5. Build-Fix Loop (this is the core of the skill)
+## 6. Build-Fix Loop (this is the core of the skill)
 
 **You yourself are the loop** — this is not a script that auto-retries. The flow
 is: you call the build script once, understand the result, edit the recipe by
@@ -211,7 +267,7 @@ hand, and call again. Every iteration must follow:
      the log through `scripts/parse_bitbake_log.py` to produce a condensed error
      summary (category + the key few dozen lines), printed to stdout.
    - Report success/failure via exit code — don't reinvent the success check.
-2. On success (exit 0): jump to section 6, finishing up.
+2. On success (exit 0): jump to section 7, finishing up.
 3. On failure:
    - Read the condensed summary `build_loop.sh` printed, and cross-reference
      `references/error-fix-map.md` to map the symptom to its common cause and
@@ -244,7 +300,7 @@ hand, and call again. Every iteration must follow:
 4. **Retry budget:** default max 8 iterations. Before ending each iteration,
    check you still have budget; if you're about to exceed the limit without
    success, **do not retry forever** — stop and give the user a clear diagnostic
-   report (see section 7, failure wrap-up).
+   report (see section 8, failure wrap-up).
 
 ### Token-efficiency reminder
 
@@ -254,7 +310,7 @@ only when the condensed summary is insufficient to determine the root cause
 should you use `grep`/`tail` to read specific sections of the raw log on
 purpose.
 
-## 6. Success wrap-up
+## 7. Success wrap-up
 
 1. After a successful build, additionally run
    `scripts/run_in_env.sh bitbake -c package_qa <pn>` (if the recipe goes through
@@ -271,7 +327,7 @@ purpose.
    - explicitly list the items that are "my automatic judgment, please review
      manually" — the license field always goes on this list.
 
-## 7. Failure wrap-up (retry budget exceeded)
+## 8. Failure wrap-up (retry budget exceeded)
 
 Don't hide a failure. Report clearly:
 
@@ -287,8 +343,8 @@ Don't hide a failure. Report clearly:
 ## Fixing an existing recipe (not generating from scratch)
 
 If the user gives you the path to an existing `.bb`/`.bbappend` that fails to
-build, skip sections 1–4 and start straight from the build-fix loop in
-section 5.
+build, skip sections 1–5 and start straight from the build-fix loop in
+section 6.
 
 ## Helper tools
 

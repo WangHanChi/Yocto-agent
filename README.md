@@ -17,21 +17,26 @@ skill will not bootstrap a whole poky tree for you.
 ## What the skill does
 
 1. **Classifies the input**: git URL / archive (URL or local path) / local
-   directory, fetching the source accordingly. A local directory prompts a
-   choice between "dev mode" (`externalsrc`, fast but not reproducible) and
-   "vendor tarball" (packed into the layer, reproducible).
-2. **Detects the build system** (autotools / cmake / meson / cargo / python3 /
+   directory, fetching the source accordingly. For a git URL it first asks which
+   version (tag / branch / commit) to pin. A local directory prompts a choice
+   between "dev mode" (`externalsrc`, fast but not reproducible) and "vendor
+   tarball" (packed into the layer, reproducible).
+2. **Checks for an existing recipe first** — searches the available layers and
+   the OpenEmbedded Layer Index so it doesn't reinvent a recipe upstream already
+   maintains, preferring a `.bbappend` or adding the maintained layer when one
+   exists.
+3. **Detects the build system** (autotools / cmake / meson / cargo / python3 /
    kernel module / qmake / plain Makefile) and maps it to the right bitbake
    class.
-3. **Gets a baseline from `recipetool create`**, then the agent refines the
+4. **Gets a baseline from `recipetool create`**, then the agent refines the
    spots `recipetool` commonly gets wrong: LICENSE / `LIC_FILES_CHKSUM`, the
    `SRCREV` pin, `DEPENDS`, and `do_install`.
-4. **Build-fix loop**: repeatedly runs `bitbake <recipe>`, condenses the
+5. **Build-fix loop**: repeatedly runs `bitbake <recipe>`, condenses the
    (often huge) build log into a categorized error summary, and edits the
    recipe along a built-in symptom → cause → fix map, until success or the
    retry budget (default 8 iterations), keeping each iteration's full log and a
    record of changes.
-5. Can also point at an **existing recipe that fails to build**, skipping
+6. Can also point at an **existing recipe that fails to build**, skipping
    generation and going straight into the build-fix loop.
 
 ## Project layout

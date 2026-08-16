@@ -15,17 +15,20 @@ skill 不會幫你建立整套 poky。
 ## 這個 skill 做什麼
 
 1. **判斷輸入型態**：git URL / 壓縮檔（URL 或本機路徑）/ 本機資料夾，分別用對應方式取得
-   原始碼。本機資料夾會問清楚你要「開發模式（`externalsrc`，快但不可重現）」還是
-   「vendor tarball（打包進 layer，可重現）」。
-2. **偵測 build system**（autotools / cmake / meson / cargo / python3 / kernel module /
+   原始碼。若是 git URL 會先問你要 pin 哪個版本（tag / branch / commit）。本機資料夾會問
+   清楚你要「開發模式（`externalsrc`，快但不可重現）」還是「vendor tarball（打包進 layer，
+   可重現）」。
+2. **先檢查有沒有現成的 recipe**——搜尋目前可用的 layer 以及 OpenEmbedded Layer Index，
+   避免重造上游已經在維護的 recipe；若已經有，優先用 `.bbappend` 或直接加入那個 layer。
+3. **偵測 build system**（autotools / cmake / meson / cargo / python3 / kernel module /
    qmake / 純 Makefile），對照到正確的 bitbake class。
-3. **用 `recipetool create` 產生 baseline**，再由 agent 精修 LICENSE /
+4. **用 `recipetool create` 產生 baseline**，再由 agent 精修 LICENSE /
    `LIC_FILES_CHKSUM` / `SRCREV` pin / `DEPENDS` / `do_install` 這幾個
    `recipetool` 常常猜不準的地方。
-4. **Build-fix loop**：反覆執行 `bitbake <recipe>`，把巨大的 build log 濃縮成分類過的
+5. **Build-fix loop**：反覆執行 `bitbake <recipe>`，把巨大的 build log 濃縮成分類過的
    錯誤摘要，對照內建的症狀 → 成因 → 修法對照表動手改 recipe，直到成功或達重試上限
    （預設 8 輪），並保留每輪的完整 log 與改動紀錄。
-5. 也可以直接指向一個**已經存在但 build 失敗的 recipe**，跳過產生步驟，直接進入
+6. 也可以直接指向一個**已經存在但 build 失敗的 recipe**，跳過產生步驟，直接進入
    build-fix loop。
 
 ## 專案結構
