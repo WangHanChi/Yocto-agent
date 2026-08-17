@@ -145,6 +145,49 @@ ENV_SETUP="/home/you/yocto/setup-build-env.sh"
   `ENV_SETUP` at a one-line wrapper (`source /path/to/poky/oe-init-build-env
   /path/to/builddir`) or directly at poky's `oe-init-build-env`.
 
+### If your project is managed by kas, repo, or west
+
+`ENV_SETUP` has to be **sourceable**. `kas shell project.yml` is not: it spawns
+a child shell, so it cannot hand its environment back to the caller. Point
+`ENV_SETUP` at a small wrapper that sources the underlying pieces instead:
+
+```sh
+# setup-build-env.sh
+. /path/to/project/env.sh                                    # KAS_MACHINE, DL_DIR, SSTATE_DIR…
+. /path/to/project/oe-core/oe-init-build-env /path/to/build
+```
+
+Include whatever variables the tool would normally inject — if `DL_DIR` and
+`SSTATE_DIR` only reach bitbake through its environment passthrough, a wrapper
+that omits them quietly re-downloads everything into `build/downloads`.
+
+Two further consequences worth knowing:
+
+- This path does not regenerate `local.conf` / `bblayers.conf` or re-align layer
+  checkouts. After editing the tool's project file, run it once (e.g. `kas shell
+  project.yml -c true`) before the next build.
+- **Do not add layers with `bitbake-layers add-layer`** — a generated
+  `bblayers.conf` is rewritten on the tool's next run and your layer disappears,
+  usually surfacing much later as "recipe not found". Add it to the project file
+  instead; for kas, a local layer is a `repos:` entry with a path and no url:
+
+  ```yaml
+  repos:
+    meta-yourlayer:
+      path: meta-yourlayer
+  ```
+
+### Runtime artifacts
+
+The scripts create two directories in the directory you run the agent from.
+Neither belongs in version control, so add them to your project's `.gitignore`:
+
+```gitignore
+yocto-recipe-gen-logs/       # per-iteration build logs
+.yocto-recipe-gen-scratch/   # staged sources for analysis
+.yocto-recipe-gen.conf       # points at a local path; keep it untracked
+```
+
 ## Usage
 
 In a Yocto project directory (one whose environment you can source), open
